@@ -20,8 +20,12 @@ const baseSystemPrompt = fs.readFileSync(
   "utf8"
 );
 
-// Number of recent channel messages to pass as conversation context
-const CONTEXT_MESSAGES = 10;
+// How many recent messages to fetch total
+const FETCH_MESSAGES = 8;
+// How many of those to pass to the model as generation history (threading)
+const HISTORY_MESSAGES = 4;
+// How many to use as retrieval context (just enough to resolve references)
+const RETRIEVAL_CONTEXT_MESSAGES = 3;
 
 const client = new Client({
   intents: [
@@ -53,8 +57,8 @@ client.on(Events.MessageCreate, async (message) => {
   try {
     await message.channel.sendTyping();
 
-    // Fetch recent channel messages for conversation context
-    const recent = await message.channel.messages.fetch({ limit: CONTEXT_MESSAGES + 1 });
+    // Fetch recent channel messages
+    const recent = await message.channel.messages.fetch({ limit: FETCH_MESSAGES + 1 });
     const priorMessages = [...recent.values()]
       .filter((m) => m.id !== message.id)
       .reverse()
@@ -66,13 +70,14 @@ client.on(Events.MessageCreate, async (message) => {
       })
       .filter(({ text }) => text.length > 0);
 
-    // String form for retrieval
+    // Short window for retrieval — just enough to resolve references in the current message
     const conversationContext = priorMessages
+      .slice(-RETRIEVAL_CONTEXT_MESSAGES)
       .map(({ name, text }) => `${name}: ${text}`)
       .join("\n");
 
-    // OpenAI message format for generation — bot turns become assistant, everyone else user
-    const history = priorMessages.map(({ isBot, name, text }) => ({
+    // Slightly longer window for generation — enough to follow a thread, not enough to dominate
+    const history = priorMessages.slice(-HISTORY_MESSAGES).map(({ isBot, name, text }) => ({
       role: isBot ? "assistant" : "user",
       content: isBot ? text : `${name}: ${text}`,
     }));
