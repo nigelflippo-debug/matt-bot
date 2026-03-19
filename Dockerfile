@@ -13,11 +13,14 @@ RUN cd implementations/discord-bot && npm ci --omit=dev
 # Copy source
 COPY implementations/ ./implementations/
 
-# Copy data files (corpus + enriched; indexes are on the Railway volume at /app/data)
-COPY data/corpus.json data/enriched.json ./data/
+# Stage data files outside the volume mount path so the volume doesn't hide them.
+# At startup we copy them into /app/data/ if not already present.
+COPY data/corpus.json data/enriched.json ./data-src/
 
-# Startup: build indexes if missing, then start the bot
+# Startup: seed data files from image, build indexes if missing, then start the bot
 CMD ["sh", "-c", "\
+  cp -n /app/data-src/corpus.json /app/data/corpus.json && \
+  cp -n /app/data-src/enriched.json /app/data/enriched.json && \
   if [ ! -d /app/data/index-pair ] || [ ! -d /app/data/index-window ]; then \
     echo 'Indexes not found — building (this takes a few minutes)...' && \
     cd /app && node implementations/rag/index.js && \
