@@ -39,8 +39,9 @@ client.on(Events.MessageCreate, async (message) => {
   // Ignore messages from bots (including ourselves)
   if (message.author.bot) return;
 
-  // Only respond when mentioned
-  if (!message.mentions.has(client.user)) return;
+  // Respond to everything in #gweeod, or when mentioned anywhere else
+  const inGweeod = message.channel.name === "gweeod";
+  if (!inGweeod && !message.mentions.has(client.user)) return;
 
   // Strip the mention(s) from the message text
   const userMessage = message.content
@@ -54,23 +55,34 @@ client.on(Events.MessageCreate, async (message) => {
 
     // Fetch recent channel messages for conversation context
     const recent = await message.channel.messages.fetch({ limit: CONTEXT_MESSAGES + 1 });
-    const contextMessages = [...recent.values()]
+    const priorMessages = [...recent.values()]
       .filter((m) => m.id !== message.id)
       .reverse()
       .map((m) => {
-        const name = m.author.bot ? "Matt" : m.member?.displayName ?? m.author.username;
+        const isBot = m.author.bot;
+        const name = isBot ? "Matt" : m.member?.displayName ?? m.author.username;
         const text = m.content.replace(/<@!?\d+>/g, "").trim();
-        return `${name}: ${text}`;
+        return { isBot, name, text };
       })
-      .filter((line) => line.length > 6); // skip empty/mention-only messages
+      .filter(({ text }) => text.length > 0);
 
-    const conversationContext = contextMessages.join("\n");
+    // String form for retrieval
+    const conversationContext = priorMessages
+      .map(({ name, text }) => `${name}: ${text}`)
+      .join("\n");
+
+    // OpenAI message format for generation — bot turns become assistant, everyone else user
+    const history = priorMessages.map(({ isBot, name, text }) => ({
+      role: isBot ? "assistant" : "user",
+      content: isBot ? text : `${name}: ${text}`,
+    }));
 
     // Retrieve similar examples (no query enrichment — fast, lore in prompt)
     const results = await retrieve(userMessage, 5, conversationContext);
 
     const systemPrompt = buildSystemPrompt(baseSystemPrompt, results);
-    const reply = await generate(systemPrompt, [], userMessage);
+    const senderName = message.member?.displayName ?? message.author.username;
+    const reply = await generate(systemPrompt, history, `${senderName}: ${userMessage}`);
 
     await message.reply(reply);
   } catch (err) {
