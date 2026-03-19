@@ -85,6 +85,18 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
+  // Handle "list lore" — display all current lore entries
+  if (/^list lore$/i.test(userMessage)) {
+    const entries = getAllLore();
+    if (entries.length === 0) {
+      await message.reply(`No lore stored yet.`);
+    } else {
+      const list = entries.map((e, i) => `${i + 1}. ${e.text}`).join("\n");
+      await message.reply(`**Lore (${entries.length} entries):**\n${list}`);
+    }
+    return;
+  }
+
   // Handle "consolidate lore" — run full coalesce pass over existing entries
   if (/^consolidate lore$/i.test(userMessage)) {
     try {
