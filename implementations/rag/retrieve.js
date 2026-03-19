@@ -29,8 +29,9 @@ const client = new OpenAI();
 const pairIndex = new LocalIndex(pairIndexPath);
 const windowIndex = new LocalIndex(windowIndexPath);
 
-// Load all enriched records once at startup for keyword search
+// Load all enriched records once at startup for keyword search + ID lookup
 const allRecords = JSON.parse(fs.readFileSync(enrichedPath, "utf8"));
+const recordById = new Map(allRecords.map((r) => [r.id, r]));
 
 // Load full corpus and group by chat for lore search
 const fullCorpus = JSON.parse(fs.readFileSync(corpusPath, "utf8"));
@@ -303,7 +304,8 @@ export async function retrieve(message, k = 10, conversationContext = "") {
     const id = result.item.metadata.id;
     if (seen.has(id)) continue;
     seen.add(id);
-    merged.push({ score: result.score, metadata: result.item.metadata });
+    const record = recordById.get(id);
+    if (record) merged.push({ score: result.score, metadata: record });
   }
 
   // Add keyword matches that vector search missed entirely

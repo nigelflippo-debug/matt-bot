@@ -63,7 +63,8 @@ async function buildIndex(indexPath, records, getText, label) {
     const response = await embedWithRetry(batch.map(getText));
 
     for (let j = 0; j < batch.length; j++) {
-      pending.push({ vector: response.data[j].embedding, metadata: batch[j] });
+      // Store only the ID — full record is looked up from enriched.json at query time
+      pending.push({ vector: response.data[j].embedding, metadata: { id: batch[j].id } });
     }
 
     completed += batch.length;
