@@ -90,9 +90,22 @@ client.on(Events.MessageCreate, async (message) => {
     const entries = getAllLore();
     if (entries.length === 0) {
       await message.reply(`No lore stored yet.`);
-    } else {
-      const list = entries.map((e, i) => `${i + 1}. ${e.text}`).join("\n");
-      await message.reply(`**Lore (${entries.length} entries):**\n${list}`);
+      return;
+    }
+    const lines = entries.map((e, i) => `${i + 1}. ${e.text}`);
+    const chunks = [];
+    let current = `**Lore (${entries.length} entries):**\n`;
+    for (const line of lines) {
+      if (current.length + line.length + 1 > 1900) {
+        chunks.push(current.trimEnd());
+        current = "";
+      }
+      current += line + "\n";
+    }
+    if (current.trim()) chunks.push(current.trimEnd());
+    await message.reply(chunks[0]);
+    for (const chunk of chunks.slice(1)) {
+      await message.channel.send(chunk);
     }
     return;
   }
