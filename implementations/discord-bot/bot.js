@@ -10,7 +10,7 @@ import { Client, Events, GatewayIntentBits, MessageFlags } from "discord.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { retrieve } from "../rag/retrieve.js";
+import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -77,8 +77,10 @@ client.on(Events.MessageCreate, async (message) => {
       content: isBot ? text : `${name}: ${text}`,
     }));
 
-    // Retrieve similar examples (no query enrichment — fast, lore in prompt)
-    const results = await retrieve(userMessage, 5, conversationContext);
+    const [results, loreWindows] = await Promise.all([
+      retrieve(userMessage, 5, conversationContext),
+      loreSearch(userMessage, 3),
+    ]);
 
     // Extract the last few Matt replies to discourage repetition
     const recentBotReplies = history
@@ -86,7 +88,7 @@ client.on(Events.MessageCreate, async (message) => {
       .slice(-3)
       .map((m) => m.content);
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, [], recentBotReplies);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies);
     const senderName = message.member?.displayName ?? message.author.username;
     const reply = await generate(systemPrompt, history, `${senderName}: ${userMessage}`);
 

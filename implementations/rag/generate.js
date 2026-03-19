@@ -78,7 +78,7 @@ export async function generate(systemPrompt, history, userMessage) {
   const response = await client.chat.completions.create({
     model: MODEL,
     max_tokens: 300,
-    temperature: 0.9,
+    temperature: 0.8,
     messages: [
       { role: "system", content: systemPrompt },
       ...history,

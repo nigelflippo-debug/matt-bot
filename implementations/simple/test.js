@@ -11,7 +11,7 @@ import fs from "fs";
 import path from "path";
 import readline from "readline";
 import { fileURLToPath } from "url";
-import { retrieve } from "../rag/retrieve.js";
+import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -38,8 +38,10 @@ async function ask() {
     input = input.trim();
     if (!input) return ask();
 
-    // Style retrieval only — no query enrichment, small K
-    const results = await retrieve(input, 5);
+    const [results, loreWindows] = await Promise.all([
+      retrieve(input, 5),
+      loreSearch(input, 3),
+    ]);
 
     if (DEBUG) {
       console.log("[retrieved examples]");
@@ -49,6 +51,10 @@ async function ask() {
           `\n  ${i + 1}. [${responseType} / ${lengthBucket} / ${timestamp.slice(0, 10)}]${ctx}\n  ${response}`
         );
       });
+      if (loreWindows.length > 0) {
+        console.log("\n[lore windows]");
+        loreWindows.forEach((w, i) => console.log(`\n  ${i + 1}. [${w.chat}]\n${w.text.split("\n").map(l => `    ${l}`).join("\n")}`));
+      }
       console.log();
     }
 
@@ -57,7 +63,7 @@ async function ask() {
       .slice(-3)
       .map((m) => m.content);
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, [], recentBotReplies);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies);
     const reply = await generate(systemPrompt, history, input);
     history.push({ role: "user", content: input });
     history.push({ role: "assistant", content: reply });
