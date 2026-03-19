@@ -244,7 +244,12 @@ export async function embedPendingLore() {
   const entries = load();
   const pending = entries.filter((e) => e.category === "fact" && e.embedded === false);
 
-  if (pending.length === 0) return 0;
+  if (pending.length === 0) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_embed_check", pending: 0 }));
+    return 0;
+  }
+
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_embed_start", pending: pending.length, ids: pending.map((e) => e.id) }));
 
   if (!(await loreIndex.isIndexCreated())) {
     await loreIndex.createIndex();
@@ -298,7 +303,9 @@ export async function retrieveLore(query, k = 5) {
   const entries = load();
   const entryById = new Map(entries.map((e) => [e.id, e]));
 
-  return results.map((r) => entryById.get(r.item.metadata.id)).filter(Boolean);
+  const retrieved = results.map((r) => entryById.get(r.item.metadata.id)).filter(Boolean);
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_retrieve", count: retrieved.length, facts: retrieved.map((e) => e.text.slice(0, 60)) }));
+  return retrieved;
 }
 
 // ---------------------------------------------------------------------------
