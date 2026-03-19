@@ -63,6 +63,7 @@ export async function enrichQuery(message, conversationContext = "") {
     ? `CONVERSATION HISTORY:\n${conversationContext}\n\nCURRENT MESSAGE:\n${message}`
     : message;
 
+  const t0 = Date.now();
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",
     temperature: 0.2,
@@ -72,7 +73,9 @@ export async function enrichQuery(message, conversationContext = "") {
     ],
   });
 
-  return response.choices[0].message.content.trim();
+  const enriched = response.choices[0].message.content.trim();
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "query_enriched", ms: Date.now() - t0, enriched }));
+  return enriched;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +280,8 @@ export async function retrieve(message, k = 10, conversationContext = "") {
     client.embeddings.create({ model: "text-embedding-3-small", input: [message] }),
   ]);
 
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "keyword_search", hits: keywordResults.length }));
+
   // Re-embed using the enriched query (higher quality than raw message)
   const enrichedEmbResponse = await client.embeddings.create({
     model: "text-embedding-3-small",
@@ -286,10 +291,12 @@ export async function retrieve(message, k = 10, conversationContext = "") {
 
   // Search both vector indexes
   const candidateCount = Math.max(k * 3, 30);
+  const t0 = Date.now();
   const [pairResults, windowResults] = await Promise.all([
     pairIndex.queryItems(queryVector, candidateCount),
     windowIndex.queryItems(queryVector, candidateCount),
   ]);
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "vector_search", pairHits: pairResults.length, windowHits: windowResults.length, ms: Date.now() - t0 }));
 
   // Build keyword score map for reranking
   const keywordScores = new Map(

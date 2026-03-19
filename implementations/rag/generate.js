@@ -99,5 +99,16 @@ export async function generate(systemPrompt, history, userMessage) {
       { role: "user", content: userMessage },
     ],
   });
+
+  const { prompt_tokens, completion_tokens } = response.usage;
+  console.log(JSON.stringify({
+    ts: new Date().toISOString(),
+    stage: "generation_complete",
+    model: MODEL,
+    promptTokens: prompt_tokens,
+    completionTokens: completion_tokens,
+    finishReason: response.choices[0].finish_reason,
+  }));
+
   return response.choices[0].message.content.trim();
 }

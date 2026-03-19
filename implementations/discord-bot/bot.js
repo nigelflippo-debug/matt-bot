@@ -36,8 +36,13 @@ const client = new Client({
   ],
 });
 
+function log(requestId, stage, data = {}) {
+  const entry = { ts: new Date().toISOString(), requestId, stage, ...data };
+  console.log(JSON.stringify(entry));
+}
+
 client.once(Events.ClientReady, (c) => {
-  console.log(`Matt Bot ready — logged in as ${c.user.tag}`);
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag }));
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -55,18 +60,28 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (!userMessage) return;
 
+  const requestId = message.id.slice(-6);
+  const senderName = message.member?.displayName ?? message.author.username;
+
+  log(requestId, "message_received", {
+    channel: message.channel.name,
+    sender: senderName,
+    preview: userMessage.slice(0, 80),
+  });
+
   // Handle "remember: X" — store a lore entry and acknowledge
   const rememberMatch = userMessage.match(/^remember:\s*(.+)/i);
   if (rememberMatch) {
     const fact = rememberMatch[1].trim();
-    const addedBy = message.member?.displayName ?? message.author.username;
-    addLore(fact, addedBy);
+    addLore(fact, senderName);
+    log(requestId, "lore_added", { fact, addedBy: senderName });
     await message.reply(`Got it. I'll remember that.`);
     return;
   }
 
   try {
     await message.channel.sendTyping();
+    const t0 = Date.now();
 
     // Fetch recent channel messages
     const recent = await message.channel.messages.fetch({ limit: FETCH_MESSAGES + 1 });
@@ -81,6 +96,8 @@ client.on(Events.MessageCreate, async (message) => {
       })
       .filter(({ text }) => text.length > 0);
 
+    log(requestId, "context_fetched", { priorMessageCount: priorMessages.length });
+
     // Short window for retrieval — just enough to resolve references in the current message
     const conversationContext = priorMessages
       .slice(-RETRIEVAL_CONTEXT_MESSAGES)
@@ -93,10 +110,18 @@ client.on(Events.MessageCreate, async (message) => {
       content: isBot ? text : `${name}: ${text}`,
     }));
 
+    const t1 = Date.now();
     const [results, loreWindows] = await Promise.all([
       retrieve(userMessage, 5, conversationContext),
       loreSearch(userMessage, 3),
     ]);
+    const t2 = Date.now();
+
+    log(requestId, "retrieval_complete", {
+      ragResults: results.length,
+      loreWindows: loreWindows.length,
+      ms: t2 - t1,
+    });
 
     // Extract the last few Matt replies to discourage repetition
     const recentBotReplies = history
@@ -105,14 +130,25 @@ client.on(Events.MessageCreate, async (message) => {
       .map((m) => m.content);
 
     const staticLore = getAllLore();
+    log(requestId, "static_lore", { count: staticLore.length });
+
     const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, staticLore);
-    const senderName = message.member?.displayName ?? message.author.username;
+
+    log(requestId, "generating");
+    const t3 = Date.now();
     const reply = await generate(systemPrompt, history, `${senderName}: ${userMessage}`);
+    const t4 = Date.now();
+
+    log(requestId, "generated", {
+      ms: t4 - t3,
+      replyPreview: reply.slice(0, 80),
+      totalMs: t4 - t0,
+    });
 
     await message.reply(reply);
+    log(requestId, "replied");
   } catch (err) {
-    console.error("Error generating response:", err);
-    // Silent fail — don't spam the channel with error messages
+    log(requestId, "error", { message: err.message, stack: err.stack });
   }
 });
 
