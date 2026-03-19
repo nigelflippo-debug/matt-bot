@@ -52,8 +52,12 @@ async function ask() {
       console.log();
     }
 
-    // No lore windows — lore is baked into the system prompt
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results);
+    const recentBotReplies = history
+      .filter((m) => m.role === "assistant")
+      .slice(-3)
+      .map((m) => m.content);
+
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, [], recentBotReplies);
     const reply = await generate(systemPrompt, history, input);
     history.push({ role: "user", content: input });
     history.push({ role: "assistant", content: reply });
