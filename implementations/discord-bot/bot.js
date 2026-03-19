@@ -12,7 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
-import { addLore, removeLore, getAllLore, consolidateLore } from "../rag/lore-store.js";
+import { addLore, removeLore, getAllLore, consolidateLore, embedPendingLore, retrieveLore, getDirectives } from "../rag/lore-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -182,16 +182,21 @@ client.on(Events.MessageCreate, async (message) => {
       ms: t2 - t1,
     });
 
+    // Embed any pending lore entries, then retrieve relevant facts + directives
+    await embedPendingLore();
+    const [retrievedFacts, directives] = await Promise.all([
+      retrieveLore(userMessage, 5),
+      Promise.resolve(getDirectives()),
+    ]);
+    log(requestId, "lore_retrieved", { facts: retrievedFacts.length, directives: directives.length });
+
     // Extract the last few Matt replies to discourage repetition
     const recentBotReplies = history
       .filter((m) => m.role === "assistant")
       .slice(-3)
       .map((m) => m.content);
 
-    const staticLore = getAllLore();
-    log(requestId, "static_lore", { count: staticLore.length });
-
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, staticLore);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, retrievedFacts, directives);
 
     log(requestId, "generating");
     const t3 = Date.now();

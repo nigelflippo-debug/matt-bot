@@ -22,17 +22,29 @@ function formatExamples(results) {
  * Inserts before "## Final Instruction" so the static examples and retrieved
  * examples are both present.
  */
-export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], staticLore = []) {
+export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], retrievedFacts = [], directives = []) {
   let injection = "";
 
-  // Static lore: user-curated facts and corrections, always authoritative.
-  if (staticLore.length > 0) {
-    const loreText = staticLore.map((e) => `- ${e.text}`).join("\n");
-    injection += `## Authoritative facts (treat as ground truth)
+  // Directives: behavioral rules the group has set — always inject.
+  if (directives.length > 0) {
+    const directiveText = directives.map((e) => `- ${e.text}`).join("\n");
+    injection += `## Rules (follow these exactly)
 
-These facts have been confirmed or corrected by the group. If anything in your training contradicts these, defer to this list.
+${directiveText}
 
-${loreText}
+---
+
+`;
+  }
+
+  // Retrieved facts: semantically relevant memories from the group's fact store.
+  if (retrievedFacts.length > 0) {
+    const factText = retrievedFacts.map((e) => `- ${e.text}`).join("\n");
+    injection += `## Relevant facts (treat as ground truth)
+
+These facts have been confirmed or stored by the group. If anything in your training contradicts these, defer to this list.
+
+${factText}
 
 ---
 
