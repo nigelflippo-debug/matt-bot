@@ -22,8 +22,22 @@ function formatExamples(results) {
  * Inserts before "## Final Instruction" so the static examples and retrieved
  * examples are both present.
  */
-export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = []) {
+export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], staticLore = []) {
   let injection = "";
+
+  // Static lore: user-curated facts and corrections, always authoritative.
+  if (staticLore.length > 0) {
+    const loreText = staticLore.map((e) => `- ${e.text}`).join("\n");
+    injection += `## Authoritative facts (treat as ground truth)
+
+These facts have been confirmed or corrected by the group. If anything in your training contradicts these, defer to this list.
+
+${loreText}
+
+---
+
+`;
+  }
 
   // Lore block: factual context from the group chat about shared events/memories.
   if (loreWindows.length > 0) {

@@ -12,6 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
+import { addLore, getAllLore } from "../rag/lore-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -54,6 +55,16 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (!userMessage) return;
 
+  // Handle "remember: X" — store a lore entry and acknowledge
+  const rememberMatch = userMessage.match(/^remember:\s*(.+)/i);
+  if (rememberMatch) {
+    const fact = rememberMatch[1].trim();
+    const addedBy = message.member?.displayName ?? message.author.username;
+    addLore(fact, addedBy);
+    await message.reply(`Got it. I'll remember that.`);
+    return;
+  }
+
   try {
     await message.channel.sendTyping();
 
@@ -93,7 +104,8 @@ client.on(Events.MessageCreate, async (message) => {
       .slice(-3)
       .map((m) => m.content);
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies);
+    const staticLore = getAllLore();
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, staticLore);
     const senderName = message.member?.displayName ?? message.author.username;
     const reply = await generate(systemPrompt, history, `${senderName}: ${userMessage}`);
 
