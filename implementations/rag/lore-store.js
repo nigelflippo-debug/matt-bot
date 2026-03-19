@@ -148,10 +148,10 @@ export async function consolidateLore() {
         content: `You are consolidating a fact store. Given a numbered list of facts, return a deduplicated, merged version.
 
 Rules:
-- Merge entries that cover the same topic into one clean sentence
+- Merge entries that share a topic, person, or theme into one entry
 - Drop entries that are fully covered by another
 - Preserve all unique information — do not lose facts
-- Keep each entry as a single concise sentence or phrase
+- A merged entry can be 1-2 sentences if needed to retain distinct details
 - Return JSON: {"facts": ["fact1", "fact2", ...]}`,
       },
       { role: "user", content: list },
