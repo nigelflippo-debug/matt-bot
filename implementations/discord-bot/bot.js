@@ -12,7 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
-import { addLore, removeLore, getAllLore } from "../rag/lore-store.js";
+import { addLore, removeLore, getAllLore, consolidateLore } from "../rag/lore-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -82,6 +82,20 @@ client.on(Events.MessageCreate, async (message) => {
       capped:  `My brain is full. Someone needs to forget something first.`,
     };
     await message.reply(acks[result.action] ?? `Got it.`);
+    return;
+  }
+
+  // Handle "consolidate lore" — run full coalesce pass over existing entries
+  if (/^consolidate lore$/i.test(userMessage)) {
+    try {
+      await message.channel.sendTyping();
+      const { before, after } = await consolidateLore();
+      log(requestId, "lore_consolidated", { before, after });
+      await message.reply(`Done. Went from ${before} to ${after} entries.`);
+    } catch (err) {
+      log(requestId, "lore_consolidate_error", { message: err.message });
+      await message.reply(`Something went wrong during consolidation.`);
+    }
     return;
   }
 

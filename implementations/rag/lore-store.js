@@ -128,6 +128,53 @@ export function removeLore(keyword) {
 }
 
 /**
+ * Run a full coalesce pass over all existing entries.
+ * Merges duplicates, consolidates related facts, drops redundant entries.
+ * Returns { before, after } counts.
+ */
+export async function consolidateLore() {
+  const entries = load();
+  if (entries.length < 2) return { before: entries.length, after: entries.length };
+
+  const list = entries.map((e, i) => `${i}: ${e.text}`).join("\n");
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: `You are consolidating a fact store. Given a numbered list of facts, return a deduplicated, merged version.
+
+Rules:
+- Merge entries that cover the same topic into one clean sentence
+- Drop entries that are fully covered by another
+- Preserve all unique information — do not lose facts
+- Keep each entry as a single concise sentence or phrase
+- Return JSON: {"facts": ["fact1", "fact2", ...]}`,
+      },
+      { role: "user", content: list },
+    ],
+  });
+
+  let consolidated;
+  try {
+    consolidated = JSON.parse(response.choices[0].message.content).facts;
+    if (!Array.isArray(consolidated)) throw new Error("unexpected shape");
+  } catch {
+    throw new Error("Consolidation failed — LLM returned unexpected output");
+  }
+
+  const now = new Date().toISOString();
+  const newEntries = consolidated.map((text) => ({ text, addedBy: "consolidation", addedAt: now }));
+  save(newEntries);
+
+  console.log(JSON.stringify({ ts: now, stage: "lore_consolidated", before: entries.length, after: newEntries.length }));
+  return { before: entries.length, after: newEntries.length };
+}
+
+/**
  * Return all lore entries.
  */
 export function getAllLore() {
