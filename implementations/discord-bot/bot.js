@@ -80,7 +80,13 @@ client.on(Events.MessageCreate, async (message) => {
     // Retrieve similar examples (no query enrichment — fast, lore in prompt)
     const results = await retrieve(userMessage, 5, conversationContext);
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results);
+    // Extract the last few Matt replies to discourage repetition
+    const recentBotReplies = history
+      .filter((m) => m.role === "assistant")
+      .slice(-3)
+      .map((m) => m.content);
+
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, [], recentBotReplies);
     const senderName = message.member?.displayName ?? message.author.username;
     const reply = await generate(systemPrompt, history, `${senderName}: ${userMessage}`);
 

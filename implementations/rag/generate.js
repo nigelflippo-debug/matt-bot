@@ -11,12 +11,8 @@ const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 /**
  * Format retrieved examples into a block to inject into the system prompt.
- * Shows context → Matt's reply so the model sees the full situational pattern.
  */
 function formatExamples(results) {
-  // Only show Matt's reply lines, not the surrounding context.
-  // Context is used for retrieval (finding the right situations) but shown
-  // to the generation model it causes narrative synthesis instead of voice mirroring.
   return results.map(({ response }) => response).join("\n");
 }
 
@@ -26,11 +22,10 @@ function formatExamples(results) {
  * Inserts before "## Final Instruction" so the static examples and retrieved
  * examples are both present.
  */
-export function buildSystemPrompt(basePrompt, results, loreWindows = []) {
+export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = []) {
   let injection = "";
 
   // Lore block: factual context from the group chat about shared events/memories.
-  // Injected first so it's available as grounding before the style examples.
   if (loreWindows.length > 0) {
     const loreText = loreWindows.map((l) => l.text).join("\n\n---\n\n");
     injection += `## Context from the group chat
@@ -48,13 +43,26 @@ ${loreText}
   const exampleBlock = formatExamples(results);
   injection += `## What Matt actually said in similar situations
 
-These are real replies from Matt in situations like this one. Your response should belong in this list — same length, same register, same kind of move. Do not produce something more elaborate or polished than what's here.
+These are real Matt replies to calibrate your energy and length. Use them as a vibe reference, not a template — do not lift phrases or reproduce the same move.
 
 ${exampleBlock}
 
 ---
 
 `;
+
+  // Anti-repetition: surface what Matt just said so the model avoids recycling it.
+  if (recentBotReplies.length > 0) {
+    injection += `## What you just said (do not repeat these patterns)
+
+${recentBotReplies.join("\n")}
+
+Vary your move. If you used a short quip last time, try a different angle this time. Don't open the same way twice in a row.
+
+---
+
+`;
+  }
 
   return basePrompt.replace("## Final Instruction", `${injection}## Final Instruction`);
 }
@@ -70,7 +78,7 @@ export async function generate(systemPrompt, history, userMessage) {
   const response = await client.chat.completions.create({
     model: MODEL,
     max_tokens: 300,
-    temperature: 0.7,
+    temperature: 0.9,
     messages: [
       { role: "system", content: systemPrompt },
       ...history,
