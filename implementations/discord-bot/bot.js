@@ -12,7 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
-import { addLore, getAllLore } from "../rag/lore-store.js";
+import { addLore, removeLore, getAllLore } from "../rag/lore-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -73,9 +73,29 @@ client.on(Events.MessageCreate, async (message) => {
   const rememberMatch = userMessage.match(/^remember:\s*(.+)/i);
   if (rememberMatch) {
     const fact = rememberMatch[1].trim();
-    addLore(fact, senderName);
-    log(requestId, "lore_added", { fact, addedBy: senderName });
-    await message.reply(`Got it. I'll remember that.`);
+    const result = await addLore(fact, senderName);
+    log(requestId, "lore_write", { fact, addedBy: senderName, action: result.action });
+    const acks = {
+      added:   `Got it. I'll remember that.`,
+      merged:  `Yeah I already kind of knew that, updated.`,
+      skipped: `I already know that.`,
+      capped:  `My brain is full. Someone needs to forget something first.`,
+    };
+    await message.reply(acks[result.action] ?? `Got it.`);
+    return;
+  }
+
+  // Handle "forget: X" — remove lore entries matching a keyword
+  const forgetMatch = userMessage.match(/^forget:\s*(.+)/i);
+  if (forgetMatch) {
+    const keyword = forgetMatch[1].trim();
+    const removed = removeLore(keyword);
+    log(requestId, "lore_removed", { keyword, removed });
+    if (removed === 0) {
+      await message.reply(`I don't have anything about that.`);
+    } else {
+      await message.reply(`Forgotten. Removed ${removed} thing${removed === 1 ? "" : "s"}.`);
+    }
     return;
   }
 
