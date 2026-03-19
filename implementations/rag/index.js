@@ -23,9 +23,26 @@ const pairIndexPath = path.resolve(__dirname, "../../data/index-pair");
 const windowIndexPath = path.resolve(__dirname, "../../data/index-window");
 
 const BATCH_SIZE = 100;
-const EMBED_CONCURRENCY = 10;
+const EMBED_CONCURRENCY = 5; // reduced to stay under TPM limit
 
 const client = new OpenAI();
+
+async function embedWithRetry(input, retries = 5) {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await client.embeddings.create({ model: "text-embedding-3-small", input });
+    } catch (err) {
+      if (err.status === 429 && attempt < retries - 1) {
+        const retryAfterMs = parseInt(err.headers?.["retry-after-ms"] ?? "2000", 10);
+        const wait = Math.max(retryAfterMs, 1000) * (attempt + 1);
+        console.log(`\n  rate limited — waiting ${wait}ms before retry ${attempt + 1}...`);
+        await new Promise((r) => setTimeout(r, wait));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
 
 async function buildIndex(indexPath, records, getText, label) {
   console.log(`\nBuilding ${label} index (${records.length} records)...`);
@@ -49,10 +66,7 @@ async function buildIndex(indexPath, records, getText, label) {
     await Promise.all(
       chunk.map(async (batch, offset) => {
         const batchIndex = i + offset;
-        const response = await client.embeddings.create({
-          model: "text-embedding-3-small",
-          input: batch.map(getText),
-        });
+        const response = await embedWithRetry(batch.map(getText));
 
         for (let j = 0; j < batch.length; j++) {
           const recordIndex = batchIndex * BATCH_SIZE + j;
@@ -93,10 +107,8 @@ if (!fs.existsSync(enrichedPath)) {
 const records = JSON.parse(fs.readFileSync(enrichedPath, "utf8"));
 console.log(`Loaded ${records.length} enriched records`);
 
-// Both indexes are independent — build them in parallel
-await Promise.all([
-  buildIndex(pairIndexPath, records, (r) => r.embeddingText, "pair"),
-  buildIndex(windowIndexPath, records, (r) => r.windowText, "window"),
-]);
+// Build indexes sequentially to avoid doubling the token rate
+await buildIndex(pairIndexPath, records, (r) => r.embeddingText, "pair");
+await buildIndex(windowIndexPath, records, (r) => r.windowText, "window");
 
 console.log("\nAll indexes built.");
