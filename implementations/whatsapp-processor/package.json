@@ -1,0 +1,12 @@
+{
+  "name": "whatsapp-processor",
+  "version": "1.0.0",
+  "scripts": {
+    "process": "ts-node processor.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  }
+}

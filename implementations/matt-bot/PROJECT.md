@@ -50,8 +50,10 @@ Discord Bot posts response to channel
 | Decision | Chosen | Alternatives | Rationale |
 |----------|--------|--------------|-----------|
 | Platform | Discord | WhatsApp | WhatsApp API is business-only/expensive; unofficial libs violate ToS and get banned |
-| Persona approach | Option B: examples in prompt | A: prompt-only, C: RAG | More faithful than prompt-only, far simpler than RAG for MVP |
-| LLM | Claude API | Others | Already in use, strong instruction-following for persona work |
+| Persona approach | Option C: RAG | A: prompt-only, B: static examples | Static examples too generic; RAG grounds responses in Matt's actual messages |
+| Embedding model | OpenAI text-embedding-3-small | Voyage, local models | Cheap, fast, widely supported |
+| Generation LLM | OpenAI gpt-4o-mini / gpt-4o | Claude API | Switched from Claude — OpenAI needed for embeddings, simpler to use one SDK |
+| Vector store | Vectra | Chroma, Pinecone, pgvector | File-based, no server, pure JS, zero infrastructure |
 | Hosting | Railway or Fly.io | Self-hosted long-term | Cheap, simple, suitable for a low-traffic private bot |
 
 ### Cross-Cutting Concerns
@@ -70,7 +72,7 @@ Discord Bot posts response to channel
 | 3 | Discord bot (mention + respond) | Must-have | 2 |
 | 4 | Channel context window | Must-have | 3 |
 | 5 | Hosting & deployment | Must-have | 3 |
-| 6 | RAG / embeddings upgrade | Nice-to-have | 1, 3 |
+| 6 | RAG / embeddings upgrade | Must-have | 1, 2 |
 
 ## Build Order
 1. **Message processor** — parse export, isolate Matt's messages, output clean corpus

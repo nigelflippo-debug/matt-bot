@@ -28,10 +28,19 @@ Each session file follows the template in `sessions/TEMPLATE.md`.
 
 ## Active Projects
 
-At the start of every session, read the following files to get up to speed:
+At the start of every session, read the most recent session file in `sessions/` relevant to the current task.
 
-- `implementations/matt-bot/PROJECT.md` — architecture, feature roadmap, and decisions for the main bot
-- `sessions/` — read the most recent session file relevant to the current task
+### Project overview
+
+@implementations/matt-bot/PROJECT.md
+
+### Feature plans
+
+@implementations/whatsapp-processor/plan.md
+
+@implementations/persona/plan.md
+
+@implementations/rag/plan.md
 
 ## Notes
 

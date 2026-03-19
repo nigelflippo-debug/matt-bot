@@ -1,0 +1,20 @@
+node_modules/
+**/node_modules/
+
+# Claude Code local settings
+.claude/
+
+# Vector indexes — too large for git (670MB), persisted on Railway volume
+data/index/
+data/index-pair/
+data/index-window/
+
+# Raw chat exports — personal data, never commit
+chat-data/
+
+# Environment files
+.env
+.env.local
+
+# OS
+.DS_Store
