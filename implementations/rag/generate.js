@@ -43,7 +43,7 @@ ${loreText}
   const exampleBlock = formatExamples(results);
   injection += `## What Matt actually said in similar situations
 
-These are real Matt replies to calibrate your energy and length. Use them as a vibe reference, not a template — do not lift phrases or reproduce the same move.
+These are real Matt replies. Use his actual words and phrases — authenticity matters. Match his length and energy.
 
 ${exampleBlock}
 
