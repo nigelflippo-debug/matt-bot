@@ -23,7 +23,7 @@ CMD ["sh", "-c", "\
   cp -n /app/data-src/enriched.json /app/data/enriched.json && \
   if [ ! -d /app/data/index-pair ] || [ ! -d /app/data/index-window ]; then \
     echo 'Indexes not found — building (this takes a few minutes)...' && \
-    cd /app && node implementations/rag/index.js && \
+    cd /app && node --max-old-space-size=4096 implementations/rag/index.js && \
     echo 'Indexes built.'; \
   fi && \
   node implementations/discord-bot/bot.js"]
