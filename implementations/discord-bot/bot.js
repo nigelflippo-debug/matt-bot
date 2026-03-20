@@ -97,10 +97,12 @@ client.on(Events.MessageCreate, async (message) => {
     preview: userMessage.slice(0, 80),
   });
 
-  // Handle "remember: X" — store a lore entry and acknowledge
-  const rememberMatch = userMessage.match(/^remember:\s*(.+)/i);
+  // Handle "remember: X" and "remember for now: X" — store a lore entry and acknowledge
+  const rememberMatch = userMessage.match(/^remember(?:\s+for\s+now)?:\s*(.+)/i);
+  const rememberIsEpisodic = /^remember\s+for\s+now:/i.test(userMessage);
   if (rememberMatch) {
-    const fact = rememberMatch[1].trim();
+    // Prefix "for now:" so the classifier sees the episodic hint in the text
+    const fact = rememberIsEpisodic ? `for now: ${rememberMatch[1].trim()}` : rememberMatch[1].trim();
     const result = await addLore(fact, senderName);
     log(requestId, "lore_write", { fact, addedBy: senderName, action: result.action });
     const acks = {
