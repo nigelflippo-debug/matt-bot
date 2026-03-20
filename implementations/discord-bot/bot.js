@@ -171,7 +171,16 @@ client.on(Events.MessageCreate, async (message) => {
   const rememberIsEpisodic = /^remember\s+for\s+now:/i.test(userMessage);
   if (rememberMatch) {
     if (!rememberIsEpisodic && !isAdmin(message.author.id)) {
-      await message.reply(`nah`);
+      const noLines = [
+        "I don't take orders from you",
+        "yeah I'm not doing that",
+        "lol no",
+        "who are you again",
+        "nah I'm good",
+        "I don't listen to you",
+        "not a chance",
+      ];
+      await message.reply(noLines[Math.floor(Math.random() * noLines.length)]);
       return;
     }
     // Prefix "for now:" so the classifier sees the episodic hint in the text
