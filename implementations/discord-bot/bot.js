@@ -77,8 +77,8 @@ client.on(Events.MessageCreate, async (message) => {
 
   // Strip the mention(s) from the message text; detect --debug flag
   const rawMessage = message.content.replace(/<@!?\d+>/g, "").trim();
-  const debugMode = /--debug\s*$/i.test(rawMessage);
-  const userMessage = rawMessage.replace(/--debug\s*$/i, "").trim();
+  const debugMode = /[-\u2013\u2014]{1,2}debug\s*$/i.test(rawMessage);
+  const userMessage = rawMessage.replace(/[-\u2013\u2014]{1,2}debug\s*$/i, "").trim();
 
   // Collect image attachments
   const imageUrls = [...message.attachments.values()]
