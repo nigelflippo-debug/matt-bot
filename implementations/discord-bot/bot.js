@@ -151,6 +151,7 @@ client.on(Events.MessageCreate, async (message) => {
 
   try {
     await message.channel.sendTyping();
+    const typingInterval = setInterval(() => message.channel.sendTyping(), 8000);
     const t0 = Date.now();
 
     // Fetch recent channel messages
@@ -224,9 +225,11 @@ client.on(Events.MessageCreate, async (message) => {
       totalMs: t4 - t0,
     });
 
+    clearInterval(typingInterval);
     await message.reply(reply);
     log(requestId, "replied");
   } catch (err) {
+    clearInterval(typingInterval);
     log(requestId, "error", { message: err.message, stack: err.stack });
   }
 });
