@@ -696,6 +696,100 @@ export function getAllLore() {
 }
 
 // ---------------------------------------------------------------------------
+// Public: attributePersons — one-time post-deploy enrichment
+// ---------------------------------------------------------------------------
+
+const ATTRIBUTE_SYSTEM = `You are attributing person names to a list of facts from a Discord friend group.
+
+For each fact, identify the first name of the person the fact is primarily about.
+If the fact is about multiple people equally, pick the first named.
+If the fact is not primarily about a specific named person, return null.
+
+Return a JSON object with an "attributions" array of exactly the same length as the input:
+{"attributions": [<"first name" or null>, ...]}
+JSON only, no markdown.`;
+
+/**
+ * Attribute a `person` field to all existing lore entries that don't have one.
+ * Skips directives (always null). Batches LLM calls. Saves after each batch.
+ * Idempotent — no-op if all entries already have person set.
+ * Call once at startup after pruneExpired / applyDecay.
+ * Returns { total, attributed, skipped }.
+ */
+export async function attributePersons() {
+  const BATCH_SIZE = 30;
+  const entries = load();
+
+  const targets = entries.filter(
+    (e) => !Object.prototype.hasOwnProperty.call(e, "person") || e.person === null
+  ).filter((e) => e.category !== "directive");
+
+  const total = targets.length;
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_start", total, entryCount: entries.length }));
+
+  if (total === 0) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_done", total: 0, attributed: 0, skipped: 0 }));
+    return { total: 0, attributed: 0, skipped: 0 };
+  }
+
+  let attributed = 0;
+  let skipped = 0;
+  const batches = Math.ceil(total / BATCH_SIZE);
+
+  for (let i = 0; i < total; i += BATCH_SIZE) {
+    const batch = targets.slice(i, i + BATCH_SIZE);
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_batch_start", batch: batchNum, of: batches, size: batch.length }));
+
+    let attributions;
+    try {
+      const list = batch.map((e, j) => `${j}: ${e.text}`).join("\n");
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: ATTRIBUTE_SYSTEM },
+          { role: "user", content: list },
+        ],
+      });
+      const result = JSON.parse(response.choices[0].message.content);
+      attributions = Array.isArray(result.attributions) ? result.attributions : batch.map(() => null);
+    } catch (err) {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_batch_error", batch: batchNum, message: err.message }));
+      attributions = batch.map(() => null);
+    }
+
+    // Reload to get freshest entries (in case something wrote between batches)
+    const current = load();
+    const byId = new Map(current.map((e) => [e.id, e]));
+    let batchAttributed = 0;
+    let batchSkipped = 0;
+
+    for (let j = 0; j < batch.length; j++) {
+      const person = typeof attributions[j] === "string" && attributions[j].length > 0 ? attributions[j] : null;
+      const entry = byId.get(batch[j].id);
+      if (entry) {
+        entry.person = person;
+        if (person) { batchAttributed++; attributed++; } else { batchSkipped++; skipped++; }
+      }
+    }
+
+    save([...byId.values()]);
+    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_batch_done", batch: batchNum, of: batches, attributed: batchAttributed, skipped: batchSkipped, sample: batch.slice(0, 3).map((e, j) => ({ person: attributions[j] ?? null, text: e.text.slice(0, 50) })) }));
+  }
+
+  // Summary by person
+  const final = load();
+  const byPerson = {};
+  for (const e of final) {
+    if (e.person) byPerson[e.person] = (byPerson[e.person] || 0) + 1;
+  }
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_done", total, attributed, skipped, byPerson }));
+  return { total, attributed, skipped };
+}
+
+// ---------------------------------------------------------------------------
 // Public: implicit extraction
 // ---------------------------------------------------------------------------
 

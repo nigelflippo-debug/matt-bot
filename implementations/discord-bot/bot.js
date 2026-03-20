@@ -12,7 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
-import { addLore, removeLore, getAllLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, applyDecay, extractImplicit, addImplicit, addUserAsserted } from "../rag/lore-store.js";
+import { addLore, removeLore, getAllLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, applyDecay, extractImplicit, addImplicit, addUserAsserted, attributePersons } from "../rag/lore-store.js";
 import { logMattMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -143,10 +143,12 @@ function log(requestId, stage, data = {}) {
   console.log(JSON.stringify(entry));
 }
 
-client.once(Events.ClientReady, (c) => {
+client.once(Events.ClientReady, async (c) => {
   const pruned = pruneExpired();
   const decay = applyDecay();
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag, prunedLore: pruned, decayed: decay.decayed, decayPruned: decay.pruned }));
+  // Attribute person names to existing entries that predate person tagging — no-op after first run
+  attributePersons().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_error", message: err.message })));
 });
 
 client.on(Events.MessageCreate, async (message) => {
