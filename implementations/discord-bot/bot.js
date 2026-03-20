@@ -53,14 +53,17 @@ const client = new Client({
   ],
 });
 
-async function runImplicitExtraction(conversationContext, requestId) {
+async function runImplicitExtraction(conversationContext, requestId, message) {
   try {
     const facts = await extractImplicit(conversationContext);
     log(requestId, "implicit_extract", { found: facts.length, facts: facts.map((f) => f.slice(0, 60)) });
+    let stored = false;
     for (const fact of facts) {
       const result = await addImplicit(fact);
       log(requestId, "implicit_store", { fact: fact.slice(0, 60), action: result.action });
+      if (result.action === "added" || result.action === "promoted") stored = true;
     }
+    if (stored) await message.react("🧠").catch(() => {});
   } catch (err) {
     log(requestId, "implicit_error", { message: err.message });
   }
@@ -273,7 +276,7 @@ client.on(Events.MessageCreate, async (message) => {
         ...priorMessages.slice(-3).map(({ name, text }) => `${name}: ${text}`),
         `${senderName}: ${userMessage}`,
       ].join("\n");
-      runImplicitExtraction(extractionContext, requestId).catch(() => {});
+      runImplicitExtraction(extractionContext, requestId, message).catch(() => {});
     }
 
     if (debugMode) {
