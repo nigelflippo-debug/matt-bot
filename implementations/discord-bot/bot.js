@@ -12,7 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
-import { addLore, removeLore, getAllLore, consolidateLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired } from "../rag/lore-store.js";
+import { addLore, removeLore, getAllLore, consolidateLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, extractImplicit, addImplicit } from "../rag/lore-store.js";
 import { logMattMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -52,6 +52,19 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ],
 });
+
+async function runImplicitExtraction(conversationContext, requestId) {
+  try {
+    const facts = await extractImplicit(conversationContext);
+    log(requestId, "implicit_extract", { found: facts.length, facts: facts.map((f) => f.slice(0, 60)) });
+    for (const fact of facts) {
+      const result = await addImplicit(fact);
+      log(requestId, "implicit_store", { fact: fact.slice(0, 60), action: result.action });
+    }
+  } catch (err) {
+    log(requestId, "implicit_error", { message: err.message });
+  }
+}
 
 function log(requestId, stage, data = {}) {
   const entry = { ts: new Date().toISOString(), requestId, stage, ...data };
@@ -253,6 +266,15 @@ client.on(Events.MessageCreate, async (message) => {
     clearInterval(typingInterval);
     await message.reply(reply);
     log(requestId, "replied");
+
+    // Fire implicit extraction in background — doesn't block the reply
+    if (userMessage.length >= 30) {
+      const extractionContext = [
+        ...priorMessages.slice(-3).map(({ name, text }) => `${name}: ${text}`),
+        `${senderName}: ${userMessage}`,
+      ].join("\n");
+      runImplicitExtraction(extractionContext, requestId).catch(() => {});
+    }
 
     if (debugMode) {
       const debugData = {

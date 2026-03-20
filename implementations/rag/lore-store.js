@@ -155,8 +155,8 @@ const COALESCE_SYSTEM = `You manage a compact fact store. Given an existing list
 
 Respond with a JSON object — no markdown, no explanation, just the JSON:
 
-If the new fact is already fully covered by an existing entry:
-{"action":"skip"}
+If the new fact is already fully covered by an existing entry, return the index (0-based) of that entry:
+{"action":"skip","index":<n>}
 
 If the new fact updates, corrects, or extends an existing entry, return the index (0-based) of that entry and the merged replacement text:
 {"action":"merge","index":<n>,"merged":"<full replacement text>"}
@@ -542,4 +542,129 @@ Rules:
   const after = newEntries.length;
   console.log(JSON.stringify({ ts: now, stage: "lore_consolidated", before, after }));
   return { before, after };
+}
+
+// ---------------------------------------------------------------------------
+// Public: implicit extraction
+// ---------------------------------------------------------------------------
+
+const EXTRACT_SYSTEM = `You are a memory assistant for a Discord friend group. Given a short conversation snippet, extract anything worth remembering about the people involved.
+
+Extract broadly — personal facts AND conversational signals:
+- Personal facts: job changes, moves, relationships, health, major events
+- Concrete upcoming plans (trips, meetups, activities with some specificity)
+- Opinions, preferences, and strong takes on anything — sports, politics, games, food, media, news
+- Recurring interests, hobbies, or things they care about
+- Patterns in who someone is ("always", "never", "hates when", "loves that")
+
+Do NOT extract:
+- One-word reactions, filler, or pure acknowledgment ("lol", "yeah", "nice")
+- Jokes that only work in context
+- Bot commands or meta-conversation about the bot
+- Vague speculation ("might", "probably", "maybe")
+- Questions without clear answers in the conversation
+
+Write facts in third person, concisely. Include the person's name.
+Return a JSON object: {"facts": ["...", ...]}
+Return {"facts": []} if nothing is worth capturing.
+No markdown, JSON only.`;
+
+const PROVISIONAL_EXPIRY_DAYS = 30;
+
+/**
+ * Extract memory-worthy content from a conversation snippet.
+ * Returns an array of fact strings (may be empty).
+ */
+export async function extractImplicit(conversationText) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: EXTRACT_SYSTEM },
+        { role: "user", content: conversationText },
+      ],
+    });
+    const result = JSON.parse(response.choices[0].message.content);
+    return Array.isArray(result.facts)
+      ? result.facts.filter((f) => typeof f === "string" && f.length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Store an implicitly extracted fact.
+ *
+ * - Matches existing fact        → skip (already known)
+ * - Matches existing provisional → promote provisional to permanent fact
+ * - No match                     → add as provisional (expires in 30 days)
+ *
+ * Returns { action: 'known' | 'promoted' | 'added' }
+ */
+export async function addImplicit(text, source = "bot-inferred") {
+  const entries = load();
+
+  // Check against existing facts — skip if already known
+  const facts = entries.filter((e) => e.category === "fact");
+  if (facts.length > 0) {
+    const factResult = await coalesce(text, facts);
+    if (factResult.action === "skip" || factResult.action === "merge") {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_skip", reason: "known_fact", text: text.slice(0, 80) }));
+      return { action: "known" };
+    }
+  }
+
+  // Check against existing provisionals — promote if matched
+  const provisionals = entries.filter((e) => e.category === "provisional");
+  if (provisionals.length > 0) {
+    const provResult = await coalesce(text, provisionals);
+    if (
+      (provResult.action === "skip" || provResult.action === "merge") &&
+      typeof provResult.index === "number" &&
+      provisionals[provResult.index]
+    ) {
+      const target = provisionals[provResult.index];
+      const promotedText = provResult.action === "merge" ? provResult.merged : target.text;
+      const actualIndex = entries.findIndex((e) => e.id === target.id);
+      if (actualIndex !== -1) {
+        entries[actualIndex] = {
+          ...entries[actualIndex],
+          text: promotedText,
+          category: "fact",
+          confidence: 1.0,
+          lifespan: "permanent",
+          expiresAt: null,
+          embedded: false,
+          updatedAt: new Date().toISOString(),
+        };
+        save(entries);
+        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_promoted", id: target.id, text: promotedText.slice(0, 80) }));
+        return { action: "promoted" };
+      }
+    }
+  }
+
+  // New — store as provisional
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + PROVISIONAL_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  entries.push({
+    id: makeId(),
+    text,
+    category: "provisional",
+    confidence: 0.6,
+    source,
+    lifespan: "long-lived",
+    expiresAt,
+    scope: "global",
+    embedded: false,
+    addedBy: "bot",
+    addedAt: now.toISOString(),
+    updatedAt: null,
+  });
+  save(entries);
+  console.log(JSON.stringify({ ts: now.toISOString(), stage: "implicit_added", text: text.slice(0, 80) }));
+  return { action: "added" };
 }
