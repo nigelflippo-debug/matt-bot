@@ -103,12 +103,22 @@ const isMeaningful = (w) => w.length >= 3 && !STOP_WORDS.has(w);
 /**
  * Extract meaningful search terms from the raw query:
  * - unigrams: words 4+ chars, not stop words
+ *             OR proper nouns (start uppercase, 3+ chars) — catches names like "Nic", "Rob", "Tom"
  * - bigrams: two-word phrases where BOTH words are meaningful (3+ chars, non-stop)
  *   This prevents "about ac" matching "about actually", etc.
  */
 function extractTerms(query) {
-  const words = query.toLowerCase().match(/[a-z']+/g) ?? [];
-  const unigrams = words.filter((w) => w.length >= 4 && !STOP_WORDS.has(w));
+  const originalWords = query.match(/[a-zA-Z']+/g) ?? [];
+  const words = originalWords.map((w) => w.toLowerCase());
+
+  // Proper nouns: starts uppercase, 3+ chars, not a stop word
+  const properNouns = new Set(
+    originalWords
+      .filter((w) => w.length >= 3 && /^[A-Z]/.test(w) && !STOP_WORDS.has(w.toLowerCase()))
+      .map((w) => w.toLowerCase())
+  );
+
+  const unigrams = words.filter((w) => (w.length >= 4 || properNouns.has(w)) && !STOP_WORDS.has(w));
   const bigrams = [];
   for (let i = 0; i < words.length - 1; i++) {
     if (isMeaningful(words[i]) && isMeaningful(words[i + 1])) {
