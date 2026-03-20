@@ -99,6 +99,54 @@ export function pruneExpired() {
   return pruned.length;
 }
 
+/**
+ * Decay confidence on bot-inferred provisional entries based on age.
+ * Linear decay from 0.6 (day 0) to 0.3 (day 30). Entries at or below 0.3 are pruned.
+ * Call at startup after pruneExpired(). Returns { decayed, pruned }.
+ */
+export function applyDecay() {
+  const entries = load();
+  const now = new Date();
+  const kept = [];
+  let decayed = 0;
+  let pruned = 0;
+
+  for (const entry of entries) {
+    if (entry.category !== "provisional" || entry.source !== "bot-inferred") {
+      kept.push(entry);
+      continue;
+    }
+
+    let ageInDays = 0;
+    try {
+      const addedAt = new Date(entry.addedAt);
+      if (!isNaN(addedAt.getTime())) {
+        ageInDays = (now - addedAt) / (1000 * 60 * 60 * 24);
+      }
+    } catch { /* treat as age 0 */ }
+
+    const newConfidence = Math.max(0.3, 0.6 - (ageInDays / 30) * 0.3);
+
+    if (newConfidence <= 0.3) {
+      pruned++;
+      continue;
+    }
+
+    if (Math.abs(newConfidence - entry.confidence) > 0.001) {
+      entry.confidence = Math.round(newConfidence * 1000) / 1000;
+      decayed++;
+    }
+    kept.push(entry);
+  }
+
+  if (decayed > 0 || pruned > 0) {
+    save(kept);
+    console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_decay", decayed, pruned }));
+  }
+
+  return { decayed, pruned };
+}
+
 // ---------------------------------------------------------------------------
 // LLM: classify
 // ---------------------------------------------------------------------------
@@ -420,7 +468,12 @@ export async function retrieveLore(query, k = 5) {
   const entries = load();
   const entryById = new Map(entries.map((e) => [e.id, e]));
 
-  const retrieved = results.map((r) => entryById.get(r.item.metadata.id)).filter(Boolean);
+  const retrieved = results
+    .map((r) => ({ entry: entryById.get(r.item.metadata.id), score: r.score }))
+    .filter(({ entry }) => Boolean(entry))
+    .sort((a, b) => (b.score * b.entry.confidence) - (a.score * a.entry.confidence))
+    .map(({ entry }) => entry);
+
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_retrieve", count: retrieved.length, facts: retrieved.map((e) => e.text.slice(0, 60)) }));
   return retrieved;
 }

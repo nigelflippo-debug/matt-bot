@@ -12,7 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
-import { addLore, removeLore, getAllLore, consolidateLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, extractImplicit, addImplicit } from "../rag/lore-store.js";
+import { addLore, removeLore, getAllLore, consolidateLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, applyDecay, extractImplicit, addImplicit } from "../rag/lore-store.js";
 import { logMattMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -76,7 +76,8 @@ function log(requestId, stage, data = {}) {
 
 client.once(Events.ClientReady, (c) => {
   const pruned = pruneExpired();
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag, prunedLore: pruned }));
+  const decay = applyDecay();
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag, prunedLore: pruned, decayed: decay.decayed, decayPruned: decay.pruned }));
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -139,11 +140,16 @@ client.on(Events.MessageCreate, async (message) => {
       await message.reply(`No lore stored yet.`);
       return;
     }
-    const counts = entries.reduce((acc, e) => { acc[e.category] = (acc[e.category] ?? 0) + 1; return acc; }, {});
-    const summary = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
-    const buf = Buffer.from(JSON.stringify(entries, null, 2), "utf8");
+    const sorted = [...entries].sort((a, b) => (b.confidence ?? 1) - (a.confidence ?? 1));
+    const counts = sorted.reduce((acc, e) => { acc[e.category] = (acc[e.category] ?? 0) + 1; return acc; }, {});
+    const categorySummary = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
+    const high = sorted.filter((e) => (e.confidence ?? 1) >= 0.8).length;
+    const medium = sorted.filter((e) => (e.confidence ?? 1) >= 0.5 && (e.confidence ?? 1) < 0.8).length;
+    const low = sorted.filter((e) => (e.confidence ?? 1) < 0.5).length;
+    const confidenceSummary = `${high} high, ${medium} medium, ${low} low`;
+    const buf = Buffer.from(JSON.stringify(sorted, null, 2), "utf8");
     await message.reply({
-      content: `**${entries.length} entries** (${summary})`,
+      content: `**${sorted.length} entries** (${categorySummary}) — ${confidenceSummary} confidence`,
       files: [{ attachment: buf, name: "lore.json" }],
     });
     return;
