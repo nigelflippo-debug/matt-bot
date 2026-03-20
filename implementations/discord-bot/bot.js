@@ -187,25 +187,18 @@ client.on(Events.MessageCreate, async (message) => {
   const rememberMatch = userMessage.match(/^remember(?:\s+for\s+now)?:\s*(.+)/i);
   const rememberIsEpisodic = /^remember\s+for\s+now:/i.test(userMessage);
   if (rememberMatch) {
-    if (!rememberIsEpisodic && !isAdmin(message.author.id)) {
-      const noLines = [
-        "I don't take orders from you",
-        "yeah I'm not doing that",
-        "lol no",
-        "who are you again",
-        "nah I'm good",
-        "I don't listen to you",
-        "not a chance",
-      ];
-      await message.reply(noLines[Math.floor(Math.random() * noLines.length)]);
-      return;
-    }
+    const isEpisodic = rememberIsEpisodic || !isAdmin(message.author.id);
+    const expiresInMs = (!rememberIsEpisodic && !isAdmin(message.author.id))
+      ? 8 * 60 * 60 * 1000   // non-admin permanent attempt → 8 hours
+      : null;                 // admin or "for now" → use category default
     // Prefix "for now:" so the classifier sees the episodic hint in the text
-    const fact = rememberIsEpisodic ? `for now: ${rememberMatch[1].trim()}` : rememberMatch[1].trim();
-    const result = await addLore(fact, senderName);
+    const fact = isEpisodic ? `for now: ${rememberMatch[1].trim()}` : rememberMatch[1].trim();
+    const result = await addLore(fact, senderName, expiresInMs);
     log(requestId, "lore_write", { fact, addedBy: senderName, action: result.action });
     const acks = {
-      added:   result.category === "episodic" ? `Got it. I'll remember that for now (expires in 7 days).` : `Got it. I'll remember that.`,
+      added:   result.category === "episodic"
+        ? (expiresInMs ? `Got it. I'll remember that for a bit.` : `Got it. I'll remember that for now (expires in 7 days).`)
+        : `Got it. I'll remember that.`,
       merged:  `Yeah I already kind of knew that, updated.`,
       skipped: `I already know that.`,
       capped:  `My brain is full. Someone needs to forget something first.`,

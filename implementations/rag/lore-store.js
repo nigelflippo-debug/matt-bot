@@ -278,7 +278,7 @@ async function preFilterCandidates(text, candidates, n = 20) {
  * then coalescing each part with existing same-category entries.
  * Returns { action: 'added' | 'merged' | 'skipped' | 'capped' | 'split', category? }
  */
-export async function addLore(text, addedBy = "unknown") {
+export async function addLore(text, addedBy = "unknown", expiresInMs = null) {
   const parts = await splitOrClassify(text);
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_classified", parts: parts.map((p) => p.category) }));
 
@@ -287,10 +287,10 @@ export async function addLore(text, addedBy = "unknown") {
     return { action: "split" };
   }
 
-  return addSingle(parts[0].text, parts[0].category, addedBy);
+  return addSingle(parts[0].text, parts[0].category, addedBy, expiresInMs);
 }
 
-async function addSingle(text, category, addedBy) {
+async function addSingle(text, category, addedBy, expiresInMs = null) {
   const entries = load();
   const sameCat = entries.filter((e) => e.category === category);
 
@@ -326,7 +326,8 @@ async function addSingle(text, category, addedBy) {
   const confidenceByCategory = { directive: 1.0, fact: 1.0, episodic: 0.8, provisional: 0.6 };
   const lifespanByCategory = { directive: "permanent", fact: "permanent", episodic: "temporary", provisional: "long-lived" };
   const now = new Date();
-  const expiresAt = category === "episodic" ? new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString() : null;
+  const defaultExpiresInMs = 7 * 24 * 60 * 60 * 1000;
+  const expiresAt = category === "episodic" ? new Date(now.getTime() + (expiresInMs ?? defaultExpiresInMs)).toISOString() : null;
 
   entries.push({
     id: makeId(),
