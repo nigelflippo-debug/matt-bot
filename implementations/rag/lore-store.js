@@ -412,7 +412,7 @@ function detectTemporalExpiry(text, now = new Date()) {
  */
 export async function addLore(text, addedBy = "unknown") {
   const parts = await splitOrClassify(text);
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_classified", parts: parts.map((p) => p.category) }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_classified", parts: parts.map((p) => ({ category: p.category, person: p.person, text: p.text.slice(0, 60) })) }));
 
   if (parts.length > 1) {
     await Promise.all(parts.map((p) => addSingle(p.text, p.category, addedBy, p.person)));
@@ -433,7 +433,7 @@ async function addSingle(text, category, addedBy, person = null) {
 
   const candidates = category === "directive" ? sameCat : await preFilterCandidates(text, sameCat);
   const result = await coalesce(text, candidates);
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_coalesce", category, candidateCount: candidates.length, result }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_coalesce", category, person, text: text.slice(0, 60), candidateCount: candidates.length, result }));
 
   if (result.action === "skip") {
     return { action: "skipped", category };
@@ -451,20 +451,22 @@ async function addSingle(text, category, addedBy, person = null) {
         updatedAt: new Date().toISOString(),
       };
       save(entries);
+      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_merged", category, person, id: targetId, text: result.merged.slice(0, 80) }));
       return { action: "merged", category };
     }
   }
 
   // coalesce returned "add" — check for contradictions before writing
   if (category === "fact" || category === "episodic") {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_contradiction_check", category, person, candidateCount: candidates.length, text: text.slice(0, 60) }));
     const contradiction = await checkContradiction(text, candidates);
     if (contradiction.contradicts && typeof contradiction.index === "number" && candidates[contradiction.index]) {
       const targetId = candidates[contradiction.index].id;
       const actualIndex = entries.findIndex((e) => e.id === targetId);
       if (actualIndex !== -1) {
-        const oldText = entries[actualIndex].text;
+        const oldEntry = entries[actualIndex];
         entries[actualIndex] = {
-          ...entries[actualIndex],
+          ...oldEntry,
           text,
           person,
           embedded: false,
@@ -472,9 +474,11 @@ async function addSingle(text, category, addedBy, person = null) {
           updatedAt: new Date().toISOString(),
         };
         save(entries);
-        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_contradiction", old: oldText.slice(0, 80), new: text.slice(0, 80) }));
+        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_contradiction", category, person, id: targetId, old: oldEntry.text.slice(0, 80), new: text.slice(0, 80) }));
         return { action: "merged", category, contradiction: true };
       }
+    } else {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_contradiction_clear", category, person, text: text.slice(0, 60) }));
     }
   }
 
@@ -504,7 +508,8 @@ async function addSingle(text, category, addedBy, person = null) {
     updatedAt: null,
   });
   save(entries);
-  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category, expiresAt: temporalExpiry, text: text.slice(0, 80) }));
+  console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_added", category, person, confidence, lifespan, expiresAt, text: text.slice(0, 80) }));
+  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category, person, expiresAt: temporalExpiry, text: text.slice(0, 80) }));
   return { action: "added", category, temporal: !!temporalExpiry };
 }
 
@@ -670,7 +675,7 @@ export async function retrieveLore(query, k = 5) {
   const others = scored.filter((e) => !e.person || !queryLower.includes(e.person.toLowerCase()));
   const retrieved = [...personMatches, ...others];
 
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_retrieve", count: retrieved.length, facts: retrieved.map((e) => e.text.slice(0, 60)) }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_retrieve", count: retrieved.length, personBoosted: personMatches.length, facts: retrieved.map((e) => ({ text: e.text.slice(0, 60), person: e.person })) }));
   return retrieved;
 }
 
@@ -767,7 +772,7 @@ export async function addImplicit(text, source = "bot-inferred", person = null) 
     const factCandidates = await preFilterCandidates(text, facts);
     const factResult = await coalesce(text, factCandidates);
     if (factResult.action === "skip" || factResult.action === "merge") {
-      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_skip", reason: "known_fact", text: text.slice(0, 80) }));
+      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_skip", reason: "known_fact", person, text: text.slice(0, 80) }));
       return { action: "known" };
     }
   }
@@ -797,7 +802,7 @@ export async function addImplicit(text, source = "bot-inferred", person = null) 
           updatedAt: new Date().toISOString(),
         };
         save(entries);
-        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_promoted", id: target.id, text: promotedText.slice(0, 80) }));
+        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_promoted", id: target.id, person, text: promotedText.slice(0, 80) }));
         return { action: "promoted" };
       }
     }
@@ -823,8 +828,8 @@ export async function addImplicit(text, source = "bot-inferred", person = null) 
     updatedAt: null,
   });
   save(entries);
-  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category: "provisional", source, expiresAt: temporalExpiry, text: text.slice(0, 80) }));
-  console.log(JSON.stringify({ ts: now.toISOString(), stage: "implicit_added", person, text: text.slice(0, 80) }));
+  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category: "provisional", person, source, expiresAt: temporalExpiry, text: text.slice(0, 80) }));
+  console.log(JSON.stringify({ ts: now.toISOString(), stage: "implicit_added", person, confidence: temporalExpiry ? 1.0 : 0.6, expiresAt: temporalExpiry ?? defaultExpiry, text: text.slice(0, 80) }));
   return { action: "added", temporal: !!temporalExpiry };
 }
 
@@ -842,7 +847,7 @@ export async function addUserAsserted(text, addedBy = "unknown") {
     const factCandidates = await preFilterCandidates(text, facts);
     const factResult = await coalesce(text, factCandidates);
     if (factResult.action === "skip" || factResult.action === "merge") {
-      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "user_asserted_skip", reason: "known_fact", text: text.slice(0, 80) }));
+      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "user_asserted_skip", reason: "known_fact", addedBy, text: text.slice(0, 80) }));
       return { action: "known" };
     }
   }
@@ -871,7 +876,7 @@ export async function addUserAsserted(text, addedBy = "unknown") {
           updatedAt: new Date().toISOString(),
         };
         save(entries);
-        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "user_asserted_promoted", id: target.id, text: promotedText.slice(0, 80) }));
+        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "user_asserted_promoted", id: target.id, addedBy, text: promotedText.slice(0, 80) }));
         return { action: "promoted" };
       }
     }
@@ -896,7 +901,7 @@ export async function addUserAsserted(text, addedBy = "unknown") {
     updatedAt: null,
   });
   save(entries);
-  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category: "provisional", source: "user-asserted", expiresAt: temporalExpiry, text: text.slice(0, 80) }));
-  console.log(JSON.stringify({ ts: now.toISOString(), stage: "user_asserted_added", addedBy, text: text.slice(0, 80) }));
+  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category: "provisional", person: null, source: "user-asserted", expiresAt: temporalExpiry, text: text.slice(0, 80) }));
+  console.log(JSON.stringify({ ts: now.toISOString(), stage: "user_asserted_added", addedBy, confidence: temporalExpiry ? 1.0 : 0.3, expiresAt: temporalExpiry ?? defaultExpiry, text: text.slice(0, 80) }));
   return { action: "added", temporal: !!temporalExpiry };
 }
