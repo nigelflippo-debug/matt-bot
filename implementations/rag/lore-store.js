@@ -438,6 +438,7 @@ async function addSingle(text, category, addedBy) {
     updatedAt: null,
   });
   save(entries);
+  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category, expiresAt: temporalExpiry, text: text.slice(0, 80) }));
   return { action: "added", category, temporal: !!temporalExpiry };
 }
 
@@ -741,6 +742,7 @@ export async function addImplicit(text, source = "bot-inferred") {
     updatedAt: null,
   });
   save(entries);
+  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category: "provisional", source, expiresAt: temporalExpiry, text: text.slice(0, 80) }));
   console.log(JSON.stringify({ ts: now.toISOString(), stage: "implicit_added", text: text.slice(0, 80) }));
   return { action: "added", temporal: !!temporalExpiry };
 }
@@ -812,6 +814,7 @@ export async function addUserAsserted(text, addedBy = "unknown") {
     updatedAt: null,
   });
   save(entries);
+  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category: "provisional", source: "user-asserted", expiresAt: temporalExpiry, text: text.slice(0, 80) }));
   console.log(JSON.stringify({ ts: now.toISOString(), stage: "user_asserted_added", addedBy, text: text.slice(0, 80) }));
   return { action: "added", temporal: !!temporalExpiry };
 }
