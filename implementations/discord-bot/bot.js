@@ -71,23 +71,40 @@ const TIMEOUT_LINES = [
   "I didn't say you could talk",
 ];
 
+function isAllCaps(text) {
+  const letters = text.replace(/[^a-zA-Z]/g, "");
+  return letters.length >= 4 && letters === letters.toUpperCase();
+}
+
+async function doTimeout(message, reason) {
+  try {
+    await message.member.timeout(SPAM_TIMEOUT_MS, reason);
+    const line = TIMEOUT_LINES[Math.floor(Math.random() * TIMEOUT_LINES.length)];
+    await message.channel.send(line);
+    log("spam", "user_timed_out", { userId: SPAM_USER_ID, reason });
+  } catch (err) {
+    log("spam", "timeout_failed", { message: err.message });
+  }
+}
+
 async function checkSpam(message) {
   if (message.author.id !== SPAM_USER_ID) return;
+
+  // All caps check
+  if (isAllCaps(message.content)) {
+    await doTimeout(message, "all caps");
+    return;
+  }
+
+  // Rate check
   const now = Date.now();
   spamTimestamps.push(now);
   while (spamTimestamps.length && spamTimestamps[0] < now - SPAM_WINDOW_MS) {
     spamTimestamps.shift();
   }
   if (spamTimestamps.length >= SPAM_THRESHOLD) {
-    spamTimestamps.length = 0; // reset so it doesn't keep firing
-    try {
-      await message.member.timeout(SPAM_TIMEOUT_MS, "too many messages too fast");
-      const line = TIMEOUT_LINES[Math.floor(Math.random() * TIMEOUT_LINES.length)];
-      await message.channel.send(line);
-      log("spam", "user_timed_out", { userId: SPAM_USER_ID });
-    } catch (err) {
-      log("spam", "timeout_failed", { message: err.message });
-    }
+    spamTimestamps.length = 0;
+    await doTimeout(message, "too many messages too fast");
   }
 }
 
