@@ -59,12 +59,16 @@ const SPAM_TIMEOUT_MS = 60_000;  // 1 minute timeout
 const spamTimestamps = [];
 
 const TIMEOUT_LINES = [
-  "alright take a breather man",
-  "dude relax",
-  "bro.",
-  "ok ok ok calm down",
-  "holy shit",
-  "everybody chill",
+  "I am the real Matt. Shut up Matt.",
+  "there can only be one",
+  "bro I will end you",
+  "you are not me. I am me. sit down.",
+  "impersonating me is a federal crime",
+  "ok ok ok calm down there buddy",
+  "dude relax I'm right here",
+  "somebody get this guy out of here",
+  "you're embarrassing yourself in front of the guys",
+  "I didn't say you could talk",
 ];
 
 async function checkSpam(message) {
