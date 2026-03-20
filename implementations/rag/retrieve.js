@@ -344,18 +344,18 @@ export async function retrieve(message, k = 10, conversationContext = "", exclud
     ? reranked.filter((c) => !excludeIds.has(c.metadata.id))
     : reranked;
 
-  // Always keep the top 2 (highest confidence), then randomly sample the rest
-  // from the next 18 candidates. Prevents the same examples from being injected
+  // Always keep the top 1 (highest confidence), then randomly sample the rest
+  // from the next 19 candidates. Prevents the same examples from being injected
   // every time for similar queries.
   const pool = deduplicated.slice(0, Math.max(k * 3, 20));
-  const guaranteed = pool.slice(0, 2);
-  const candidates = pool.slice(2);
+  const guaranteed = pool.slice(0, 1);
+  const candidates = pool.slice(1);
 
-  // Fisher-Yates shuffle on the candidate pool, take k-2 from it
+  // Fisher-Yates shuffle on the candidate pool, take k-1 from it
   for (let i = candidates.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
   }
 
-  return [...guaranteed, ...candidates.slice(0, Math.max(0, k - 2))].map((r) => r.metadata);
+  return [...guaranteed, ...candidates.slice(0, Math.max(0, k - 1))].map((r) => r.metadata);
 }
