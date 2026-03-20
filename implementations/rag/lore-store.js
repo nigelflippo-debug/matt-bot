@@ -57,6 +57,7 @@ function load() {
     if (!Object.prototype.hasOwnProperty.call(entry, "expiresAt")) { entry.expiresAt = null; dirty = true; }
     if (entry.scope === undefined) { entry.scope = "global"; dirty = true; }
     if (!Object.prototype.hasOwnProperty.call(entry, "updatedAt")) { entry.updatedAt = null; dirty = true; }
+    if (!Object.prototype.hasOwnProperty.call(entry, "person")) { entry.person = null; dirty = true; }
   }
   if (dirty) fs.writeFileSync(lorePath, JSON.stringify(entries, null, 2));
 
@@ -158,10 +159,10 @@ Categories:
 - "fact" — a permanent memory, lore, personal detail, or event. Default for most entries.
 - "episodic" — explicitly temporary information. Use when the input contains phrases like "for now", "today", "tonight", "tomorrow", "this week", "this weekend", "next week", "this month", "next month", "next year", "temporarily", "just for today", or other clear short-term signals.
 
-Return a JSON object with a "parts" array. Each part has "text" and "category".
+Return a JSON object with a "parts" array. Each part has "text", "category", and "person" (the first name of the person the fact is about, or null if not person-specific — always null for directives).
 If the entry is a single thing, return one part. If it mixes facts and directives, split them into separate parts — one per distinct fact or rule.
 
-{"parts": [{"text": "...", "category": "fact"|"directive"|"episodic"}, ...]}
+{"parts": [{"text": "...", "category": "fact"|"directive"|"episodic", "person": "<first name or null>"}, ...]}
 
 Only split when parts are clearly distinct. When in doubt, return a single part.
 Respond with JSON only — no markdown.`;
@@ -187,11 +188,12 @@ async function splitOrClassify(text) {
       return result.parts.map((p) => ({
         text: p.text ?? text,
         category: VALID_CATEGORIES.has(p.category) ? p.category : "fact",
+        person: typeof p.person === "string" && p.person.length > 0 ? p.person : null,
       }));
     }
-    return [{ text, category: "fact" }];
+    return [{ text, category: "fact", person: null }];
   } catch {
-    return [{ text, category: "fact" }]; // default: never lose an entry
+    return [{ text, category: "fact", person: null }]; // default: never lose an entry
   }
 }
 
@@ -239,6 +241,46 @@ async function coalesce(newFact, entries) {
     return JSON.parse(response.choices[0].message.content);
   } catch {
     return { action: "add" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// LLM: contradiction check
+// ---------------------------------------------------------------------------
+
+const CONTRADICTION_SYSTEM = `You manage a fact store. Given a new fact and a list of existing facts, identify if any existing fact directly contradicts the new fact — meaning both cannot be true at the same time.
+
+Do NOT flag facts that are similar, overlapping, complementary, or just updates. Only flag true logical contradictions.
+
+Examples of contradictions:
+- "Nigel lives in Seattle" vs "Nigel lives in Boston" ✓
+- "Dave is coming to the game" vs "Dave is not coming to the game" ✓
+
+Not contradictions:
+- "Nigel went to Vermont last year" vs "Nigel is going to Vermont next month" (different times)
+- "Dave likes golf" vs "Dave is bad at golf" (can both be true)
+
+Return JSON only:
+{"contradicts": true, "index": <n>}   — if existing fact at index n directly contradicts the new fact
+{"contradicts": false}                 — if no contradiction exists`;
+
+async function checkContradiction(newFact, candidates) {
+  if (candidates.length === 0) return { contradicts: false };
+
+  const list = candidates.map((e, i) => `${i}: ${e.text}`).join("\n");
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: CONTRADICTION_SYSTEM },
+        { role: "user", content: `EXISTING FACTS:\n${list}\n\nNEW FACT:\n${newFact}` },
+      ],
+    });
+    return JSON.parse(response.choices[0].message.content);
+  } catch {
+    return { contradicts: false };
   }
 }
 
@@ -373,14 +415,14 @@ export async function addLore(text, addedBy = "unknown") {
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_classified", parts: parts.map((p) => p.category) }));
 
   if (parts.length > 1) {
-    await Promise.all(parts.map((p) => addSingle(p.text, p.category, addedBy)));
+    await Promise.all(parts.map((p) => addSingle(p.text, p.category, addedBy, p.person)));
     return { action: "split" };
   }
 
-  return addSingle(parts[0].text, parts[0].category, addedBy);
+  return addSingle(parts[0].text, parts[0].category, addedBy, parts[0].person);
 }
 
-async function addSingle(text, category, addedBy) {
+async function addSingle(text, category, addedBy, person = null) {
   const entries = load();
   const sameCat = entries.filter((e) => e.category === category);
 
@@ -413,6 +455,29 @@ async function addSingle(text, category, addedBy) {
     }
   }
 
+  // coalesce returned "add" — check for contradictions before writing
+  if (category === "fact" || category === "episodic") {
+    const contradiction = await checkContradiction(text, candidates);
+    if (contradiction.contradicts && typeof contradiction.index === "number" && candidates[contradiction.index]) {
+      const targetId = candidates[contradiction.index].id;
+      const actualIndex = entries.findIndex((e) => e.id === targetId);
+      if (actualIndex !== -1) {
+        const oldText = entries[actualIndex].text;
+        entries[actualIndex] = {
+          ...entries[actualIndex],
+          text,
+          person,
+          embedded: false,
+          updatedBy: addedBy,
+          updatedAt: new Date().toISOString(),
+        };
+        save(entries);
+        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_contradiction", old: oldText.slice(0, 80), new: text.slice(0, 80) }));
+        return { action: "merged", category, contradiction: true };
+      }
+    }
+  }
+
   const now = new Date();
   const temporalExpiry = detectTemporalExpiry(text, now);
   const defaultEpisodicExpiry = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -426,6 +491,7 @@ async function addSingle(text, category, addedBy) {
   entries.push({
     id: makeId(),
     text,
+    person,
     category,
     confidence,
     source: "explicit",
@@ -592,11 +658,17 @@ export async function retrieveLore(query, k = 5) {
   const entries = load();
   const entryById = new Map(entries.map((e) => [e.id, e]));
 
-  const retrieved = results
+  const queryLower = query.toLowerCase();
+  const scored = results
     .map((r) => ({ entry: entryById.get(r.item.metadata.id), score: r.score }))
     .filter(({ entry }) => Boolean(entry))
     .sort((a, b) => (b.score * b.entry.confidence) - (a.score * a.entry.confidence))
     .map(({ entry }) => entry);
+
+  // Boost person-tagged entries whose person appears in the query
+  const personMatches = scored.filter((e) => e.person && queryLower.includes(e.person.toLowerCase()));
+  const others = scored.filter((e) => !e.person || !queryLower.includes(e.person.toLowerCase()));
+  const retrieved = [...personMatches, ...others];
 
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_retrieve", count: retrieved.length, facts: retrieved.map((e) => e.text.slice(0, 60)) }));
   return retrieved;
@@ -638,8 +710,8 @@ Do NOT extract:
 - Vague speculation ("might", "probably", "maybe")
 - Questions without clear answers in the conversation
 
-Write facts in third person, concisely. Include the person's name.
-Return a JSON object: {"facts": ["...", ...]}
+Write facts in third person, concisely. Include the person's name in the fact text.
+Return a JSON object: {"facts": [{"text": "...", "person": "<first name of person the fact is about, or null>"}, ...]}
 Return {"facts": []} if nothing is worth capturing.
 No markdown, JSON only.`;
 
@@ -647,7 +719,8 @@ const PROVISIONAL_EXPIRY_DAYS = 30;
 
 /**
  * Extract memory-worthy content from a conversation snippet.
- * Returns an array of fact strings (may be empty).
+ * Returns an array of {text, person} objects (may be empty).
+ * Handles both old string format and new object format defensively.
  */
 export async function extractImplicit(conversationText) {
   try {
@@ -661,9 +734,16 @@ export async function extractImplicit(conversationText) {
       ],
     });
     const result = JSON.parse(response.choices[0].message.content);
-    return Array.isArray(result.facts)
-      ? result.facts.filter((f) => typeof f === "string" && f.length > 0)
-      : [];
+    if (!Array.isArray(result.facts)) return [];
+    return result.facts
+      .map((f) => {
+        if (typeof f === "string") return { text: f, person: null }; // back-compat
+        if (f && typeof f.text === "string" && f.text.length > 0) {
+          return { text: f.text, person: typeof f.person === "string" && f.person.length > 0 ? f.person : null };
+        }
+        return null;
+      })
+      .filter(Boolean);
   } catch {
     return [];
   }
@@ -678,7 +758,7 @@ export async function extractImplicit(conversationText) {
  *
  * Returns { action: 'known' | 'promoted' | 'added' }
  */
-export async function addImplicit(text, source = "bot-inferred") {
+export async function addImplicit(text, source = "bot-inferred", person = null) {
   const entries = load();
 
   // Check against existing facts — skip if already known
@@ -730,6 +810,7 @@ export async function addImplicit(text, source = "bot-inferred") {
   entries.push({
     id: makeId(),
     text,
+    person,
     category: "provisional",
     confidence: temporalExpiry ? 1.0 : 0.6,
     source,
@@ -743,7 +824,7 @@ export async function addImplicit(text, source = "bot-inferred") {
   });
   save(entries);
   if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category: "provisional", source, expiresAt: temporalExpiry, text: text.slice(0, 80) }));
-  console.log(JSON.stringify({ ts: now.toISOString(), stage: "implicit_added", text: text.slice(0, 80) }));
+  console.log(JSON.stringify({ ts: now.toISOString(), stage: "implicit_added", person, text: text.slice(0, 80) }));
   return { action: "added", temporal: !!temporalExpiry };
 }
 
@@ -802,6 +883,7 @@ export async function addUserAsserted(text, addedBy = "unknown") {
   entries.push({
     id: makeId(),
     text,
+    person: null,
     category: "provisional",
     confidence: temporalExpiry ? 1.0 : 0.3,
     source: "user-asserted",

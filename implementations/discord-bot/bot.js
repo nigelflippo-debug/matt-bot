@@ -119,13 +119,13 @@ const client = new Client({
 async function runImplicitExtraction(conversationContext, requestId, message) {
   try {
     const facts = await extractImplicit(conversationContext);
-    log(requestId, "implicit_extract", { found: facts.length, facts: facts.map((f) => f.slice(0, 60)) });
+    log(requestId, "implicit_extract", { found: facts.length, facts: facts.map((f) => f.text.slice(0, 60)) });
     let anyProvisional = false;
     let anyPromoted = false;
     let anyTemporal = false;
     for (const fact of facts) {
-      const result = await addImplicit(fact);
-      log(requestId, "implicit_store", { fact: fact.slice(0, 60), action: result.action });
+      const result = await addImplicit(fact.text, "bot-inferred", fact.person);
+      log(requestId, "implicit_store", { fact: fact.text.slice(0, 60), person: fact.person, action: result.action });
       if (result.action === "added") anyProvisional = true;
       if (result.action === "promoted") anyPromoted = true;
       if (result.temporal) anyTemporal = true;
