@@ -278,7 +278,7 @@ async function preFilterCandidates(text, candidates, n = 20) {
  * then coalescing each part with existing same-category entries.
  * Returns { action: 'added' | 'merged' | 'skipped' | 'capped' | 'split', category? }
  */
-export async function addLore(text, addedBy = "unknown", expiresInMs = null) {
+export async function addLore(text, addedBy = "unknown") {
   const parts = await splitOrClassify(text);
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_classified", parts: parts.map((p) => p.category) }));
 
@@ -287,10 +287,10 @@ export async function addLore(text, addedBy = "unknown", expiresInMs = null) {
     return { action: "split" };
   }
 
-  return addSingle(parts[0].text, parts[0].category, addedBy, expiresInMs);
+  return addSingle(parts[0].text, parts[0].category, addedBy);
 }
 
-async function addSingle(text, category, addedBy, expiresInMs = null) {
+async function addSingle(text, category, addedBy) {
   const entries = load();
   const sameCat = entries.filter((e) => e.category === category);
 
@@ -326,8 +326,7 @@ async function addSingle(text, category, addedBy, expiresInMs = null) {
   const confidenceByCategory = { directive: 1.0, fact: 1.0, episodic: 0.8, provisional: 0.6 };
   const lifespanByCategory = { directive: "permanent", fact: "permanent", episodic: "temporary", provisional: "long-lived" };
   const now = new Date();
-  const defaultExpiresInMs = 7 * 24 * 60 * 60 * 1000;
-  const expiresAt = category === "episodic" ? new Date(now.getTime() + (expiresInMs ?? defaultExpiresInMs)).toISOString() : null;
+  const expiresAt = category === "episodic" ? new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString() : null;
 
   entries.push({
     id: makeId(),
@@ -647,5 +646,75 @@ export async function addImplicit(text, source = "bot-inferred") {
   });
   save(entries);
   console.log(JSON.stringify({ ts: now.toISOString(), stage: "implicit_added", text: text.slice(0, 80) }));
+  return { action: "added" };
+}
+
+/**
+ * Store a user-asserted fact as provisional with low confidence (0.3).
+ * Follows the same promotion pipeline as addImplicit — matches existing
+ * facts (skip) or provisionals (promote), otherwise stores as provisional.
+ * Returns { action: 'known' | 'promoted' | 'added' }
+ */
+export async function addUserAsserted(text, addedBy = "unknown") {
+  const entries = load();
+
+  const facts = entries.filter((e) => e.category === "fact");
+  if (facts.length > 0) {
+    const factCandidates = await preFilterCandidates(text, facts);
+    const factResult = await coalesce(text, factCandidates);
+    if (factResult.action === "skip" || factResult.action === "merge") {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "user_asserted_skip", reason: "known_fact", text: text.slice(0, 80) }));
+      return { action: "known" };
+    }
+  }
+
+  const provisionals = entries.filter((e) => e.category === "provisional");
+  if (provisionals.length > 0) {
+    const provCandidates = await preFilterCandidates(text, provisionals);
+    const provResult = await coalesce(text, provCandidates);
+    if (
+      (provResult.action === "skip" || provResult.action === "merge") &&
+      typeof provResult.index === "number" &&
+      provCandidates[provResult.index]
+    ) {
+      const target = provCandidates[provResult.index];
+      const promotedText = provResult.action === "merge" ? provResult.merged : target.text;
+      const actualIndex = entries.findIndex((e) => e.id === target.id);
+      if (actualIndex !== -1) {
+        entries[actualIndex] = {
+          ...entries[actualIndex],
+          text: promotedText,
+          category: "fact",
+          confidence: 1.0,
+          lifespan: "permanent",
+          expiresAt: null,
+          embedded: false,
+          updatedAt: new Date().toISOString(),
+        };
+        save(entries);
+        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "user_asserted_promoted", id: target.id, text: promotedText.slice(0, 80) }));
+        return { action: "promoted" };
+      }
+    }
+  }
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + PROVISIONAL_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  entries.push({
+    id: makeId(),
+    text,
+    category: "provisional",
+    confidence: 0.3,
+    source: "user-asserted",
+    lifespan: "long-lived",
+    expiresAt,
+    scope: "global",
+    embedded: false,
+    addedBy,
+    addedAt: now.toISOString(),
+    updatedAt: null,
+  });
+  save(entries);
+  console.log(JSON.stringify({ ts: now.toISOString(), stage: "user_asserted_added", addedBy, text: text.slice(0, 80) }));
   return { action: "added" };
 }

@@ -12,7 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
-import { addLore, removeLore, getAllLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, applyDecay, extractImplicit, addImplicit } from "../rag/lore-store.js";
+import { addLore, removeLore, getAllLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, applyDecay, extractImplicit, addImplicit, addUserAsserted } from "../rag/lore-store.js";
 import { logMattMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -187,32 +187,57 @@ client.on(Events.MessageCreate, async (message) => {
   const rememberMatch = userMessage.match(/^remember(?:\s+for\s+now)?:\s*(.+)/i);
   const rememberIsEpisodic = /^remember\s+for\s+now:/i.test(userMessage);
   if (rememberMatch) {
-    const isEpisodic = rememberIsEpisodic || !isAdmin(message.author.id);
-    const expiresInMs = (!rememberIsEpisodic && !isAdmin(message.author.id))
-      ? 8 * 60 * 60 * 1000   // non-admin permanent attempt → 8 hours
-      : null;                 // admin or "for now" → use category default
-    // Prefix "for now:" so the classifier sees the episodic hint in the text
-    const fact = isEpisodic ? `for now: ${rememberMatch[1].trim()}` : rememberMatch[1].trim();
-    const result = await addLore(fact, senderName, expiresInMs);
-    log(requestId, "lore_write", { fact, addedBy: senderName, action: result.action });
-    const acks = {
-      added:   result.category === "episodic"
-        ? (expiresInMs ? `Got it. I'll remember that for a bit.` : `Got it. I'll remember that for now (expires in 7 days).`)
-        : `Got it. I'll remember that.`,
-      merged:  `Yeah I already kind of knew that, updated.`,
-      skipped: `I already know that.`,
-      capped:  `My brain is full. Someone needs to forget something first.`,
-      split:   `Got it. I split that into a fact and a rule.`,
-    };
-    await message.reply(acks[result.action] ?? `Got it.`);
-    const reacts = {
-      added:   result.category === "directive" ? "🫡" : result.category === "episodic" ? "⏳" : "🧠",
-      merged:  "✏️",
-      skipped: "👍",
-      split:   "✂️",
-    };
-    const emoji = reacts[result.action];
-    if (emoji) await message.react(emoji).catch(() => {});
+    const isTrusted = isAdmin(message.author.id) || message.author.id === SPAM_USER_ID;
+    const fact = rememberMatch[1].trim();
+
+    if (rememberIsEpisodic) {
+      // "remember for now:" — episodic for everyone
+      const result = await addLore(`for now: ${fact}`, senderName);
+      log(requestId, "lore_write", { fact, addedBy: senderName, action: result.action, path: "episodic" });
+      const acks = {
+        added:   `Got it. I'll remember that for now (expires in 7 days).`,
+        merged:  `Yeah I already kind of knew that, updated.`,
+        skipped: `I already know that.`,
+        split:   `Got it. I split that into a fact and a rule.`,
+      };
+      await message.reply(acks[result.action] ?? `Got it.`);
+      const reacts = { added: "⏳", merged: "✏️", skipped: "👍", split: "✂️" };
+      const emoji = reacts[result.action];
+      if (emoji) await message.react(emoji).catch(() => {});
+    } else if (isTrusted) {
+      // "remember:" from admin or trusted user — permanent
+      const result = await addLore(fact, senderName);
+      log(requestId, "lore_write", { fact, addedBy: senderName, action: result.action, path: "permanent" });
+      const acks = {
+        added:   `Got it. I'll remember that.`,
+        merged:  `Yeah I already kind of knew that, updated.`,
+        skipped: `I already know that.`,
+        capped:  `My brain is full. Someone needs to forget something first.`,
+        split:   `Got it. I split that into a fact and a rule.`,
+      };
+      await message.reply(acks[result.action] ?? `Got it.`);
+      const reacts = {
+        added:   result.category === "directive" ? "🫡" : "🧠",
+        merged:  "✏️",
+        skipped: "👍",
+        split:   "✂️",
+      };
+      const emoji = reacts[result.action];
+      if (emoji) await message.react(emoji).catch(() => {});
+    } else {
+      // "remember:" from non-trusted user — provisional, confidence 0.3
+      const result = await addUserAsserted(fact, senderName);
+      log(requestId, "lore_write", { fact, addedBy: senderName, action: result.action, path: "provisional" });
+      const acks = {
+        added:    `noted`,
+        promoted: `yeah actually that checks out`,
+        known:    `I already know that`,
+      };
+      await message.reply(acks[result.action] ?? `noted`);
+      const reacts = { added: "🤔", promoted: "🧠" };
+      const emoji = reacts[result.action];
+      if (emoji) await message.react(emoji).catch(() => {});
+    }
     return;
   }
 
