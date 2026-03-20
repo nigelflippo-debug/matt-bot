@@ -51,6 +51,42 @@ const ADMIN_IDS = new Set(
 );
 function isAdmin(userId) { return ADMIN_IDS.has(userId); }
 
+// Spam timeout — track message timestamps for the designated user
+const SPAM_USER_ID = "1354979714434994306";
+const SPAM_WINDOW_MS = 10_000;   // 10 second window
+const SPAM_THRESHOLD = 5;        // messages before timeout
+const SPAM_TIMEOUT_MS = 60_000;  // 1 minute timeout
+const spamTimestamps = [];
+
+const TIMEOUT_LINES = [
+  "alright take a breather man",
+  "dude relax",
+  "bro.",
+  "ok ok ok calm down",
+  "holy shit",
+  "everybody chill",
+];
+
+async function checkSpam(message) {
+  if (message.author.id !== SPAM_USER_ID) return;
+  const now = Date.now();
+  spamTimestamps.push(now);
+  while (spamTimestamps.length && spamTimestamps[0] < now - SPAM_WINDOW_MS) {
+    spamTimestamps.shift();
+  }
+  if (spamTimestamps.length >= SPAM_THRESHOLD) {
+    spamTimestamps.length = 0; // reset so it doesn't keep firing
+    try {
+      await message.member.timeout(SPAM_TIMEOUT_MS, "too many messages too fast");
+      const line = TIMEOUT_LINES[Math.floor(Math.random() * TIMEOUT_LINES.length)];
+      await message.channel.send(line);
+      log("spam", "user_timed_out", { userId: SPAM_USER_ID });
+    } catch (err) {
+      log("spam", "timeout_failed", { message: err.message });
+    }
+  }
+}
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -92,6 +128,9 @@ client.once(Events.ClientReady, (c) => {
 client.on(Events.MessageCreate, async (message) => {
   // Ignore messages from bots (including ourselves)
   if (message.author.bot) return;
+
+  // Spam check — runs on every message regardless of channel or mention
+  await checkSpam(message);
 
   const inGweeod = message.channel.name === "gweeod";
   const botMentioned = message.mentions.has(client.user);
