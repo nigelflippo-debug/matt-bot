@@ -121,7 +121,17 @@ client.on(Events.MessageCreate, async (message) => {
       await message.reply(`No lore stored yet.`);
       return;
     }
-    const lines = entries.map((e, i) => `${i + 1}. [${e.category ?? "fact"}] ${e.text}`);
+    const lines = entries.map((e, i) => {
+      const tags = [e.category ?? "fact"];
+      if (e.source && e.source !== "explicit") tags.push(e.source);
+      if (e.confidence !== undefined && e.confidence < 1.0) tags.push(`conf:${e.confidence}`);
+      if (e.expiresAt) {
+        const exp = new Date(e.expiresAt);
+        const dateStr = exp.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        tags.push(`expires ${dateStr}`);
+      }
+      return `${i + 1}. [${tags.join(" • ")}] ${e.text}`;
+    });
     const chunks = [];
     let current = `**Lore (${entries.length} entries):**\n`;
     for (const line of lines) {
