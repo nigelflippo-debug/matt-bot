@@ -21,7 +21,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const lorePath = path.resolve(__dirname, "../../data/lore.json");
 const loreIndexPath = path.resolve(__dirname, "../../data/index-lore");
 
-const FACT_CAP = 100;
 const DIRECTIVE_CAP = 20;
 
 const openai = new OpenAI();
@@ -178,9 +177,8 @@ export async function addLore(text, addedBy = "unknown") {
 async function addSingle(text, category, addedBy) {
   const entries = load();
   const sameCat = entries.filter((e) => e.category === category);
-  const cap = category === "directive" ? DIRECTIVE_CAP : FACT_CAP;
 
-  if (sameCat.length >= cap) {
+  if (category === "directive" && sameCat.length >= DIRECTIVE_CAP) {
     console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_capped", category, count: sameCat.length }));
     return { action: "capped", category };
   }
