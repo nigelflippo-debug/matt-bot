@@ -82,6 +82,6 @@ Raw text similarity is brittle. "I think I should quit my job" doesn't overlap w
 - [x] Write retrieval helper (`retrieve.js`) — query enrichment + dual search + reranking
 - [x] Write generation helper (`generate.js`) — OpenAI, structured example injection
 - [x] Write test CLI (`test.js`)
-- [ ] Run enrich.js
-- [ ] Run index.js
-- [ ] Test and tune K
+- [x] Run enrich.js — completed 2026-03-18
+- [x] Run index.js — completed 2026-03-18; indexes live on Railway persistent volume
+- [x] Test and tune K — K=5, retrieval sampling (lock top 2, random from top 20 pool), temperature 0.8

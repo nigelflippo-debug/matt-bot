@@ -75,10 +75,10 @@ const provResult = await coalesce(text, provCandidates);
 ```
 
 ## Tasks
-1. [ ] Update `embedPendingLore()` — add `provisional` to the embedded categories filter
-2. [ ] Add `preFilterCandidates(text, candidates, n=20)` internal helper
-3. [ ] Update `addSingle()` — use `preFilterCandidates` for non-directive categories
-4. [ ] Update `addImplicit()` — use `preFilterCandidates` for both fact and provisional checks
+1. [x] Update `embedPendingLore()` — add `provisional` to the embedded categories filter
+2. [x] Add `preFilterCandidates(text, candidates, n=20)` internal helper
+3. [x] Update `addSingle()` — use `preFilterCandidates` for non-directive categories
+4. [x] Update `addImplicit()` — use `preFilterCandidates` for both fact and provisional checks
 5. [ ] Test: add a fact when store has > 20 facts — verify coalesce only sees <= 20 candidates (log the count)
 6. [ ] Test: add a duplicate fact — verify it is still correctly detected as `skip` after pre-filtering
 7. [ ] Test: add a fact that should merge with an existing one — verify merge still occurs after pre-filtering

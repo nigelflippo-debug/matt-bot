@@ -243,6 +243,33 @@ async function coalesce(newFact, entries) {
 }
 
 // ---------------------------------------------------------------------------
+// Internal: pre-filter candidates by vector similarity
+// ---------------------------------------------------------------------------
+
+async function preFilterCandidates(text, candidates, n = 20) {
+  if (candidates.length <= n) return candidates;
+  if (!(await loreIndex.isIndexCreated())) return candidates.slice(0, n);
+
+  try {
+    const embResponse = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: [text],
+    });
+    const results = await loreIndex.queryItems(embResponse.data[0].embedding, n * 2);
+
+    const candidateById = new Map(candidates.map((e) => [e.id, e]));
+    const filtered = results
+      .map((r) => candidateById.get(r.item.metadata.id))
+      .filter(Boolean)
+      .slice(0, n);
+
+    return filtered.length > 0 ? filtered : candidates.slice(0, n);
+  } catch {
+    return candidates.slice(0, n);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public: add
 // ---------------------------------------------------------------------------
 
@@ -272,15 +299,16 @@ async function addSingle(text, category, addedBy) {
     return { action: "capped", category };
   }
 
-  const result = await coalesce(text, sameCat);
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_coalesce", category, result }));
+  const candidates = category === "directive" ? sameCat : await preFilterCandidates(text, sameCat);
+  const result = await coalesce(text, candidates);
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_coalesce", category, candidateCount: candidates.length, result }));
 
   if (result.action === "skip") {
     return { action: "skipped", category };
   }
 
-  if (result.action === "merge" && typeof result.index === "number" && sameCat[result.index]) {
-    const targetId = sameCat[result.index].id;
+  if (result.action === "merge" && typeof result.index === "number" && candidates[result.index]) {
+    const targetId = candidates[result.index].id;
     const actualIndex = entries.findIndex((e) => e.id === targetId);
     if (actualIndex !== -1) {
       entries[actualIndex] = {
@@ -407,7 +435,7 @@ export async function removeLore(query) {
  */
 export async function embedPendingLore() {
   const entries = load();
-  const pending = entries.filter((e) => (e.category === "fact" || e.category === "episodic") && e.embedded === false);
+  const pending = entries.filter((e) => (e.category === "fact" || e.category === "episodic" || e.category === "provisional") && e.embedded === false);
 
   if (pending.length === 0) {
     console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_embed_check", pending: 0 }));
@@ -495,109 +523,6 @@ export function getAllLore() {
 }
 
 // ---------------------------------------------------------------------------
-// Public: consolidate
-// ---------------------------------------------------------------------------
-
-/**
- * Run a full consolidation pass over all entries.
- * Facts and directives are consolidated separately to avoid cross-contamination.
- * Rebuilds the Vectra index from scratch since IDs change.
- */
-export async function consolidateLore() {
-  const entries = load();
-  if (entries.length < 2) return { before: entries.length, after: entries.length };
-
-  const facts = entries.filter((e) => e.category === "fact");
-  const directives = entries.filter((e) => e.category === "directive");
-  // Episodic and provisional entries are excluded from consolidation — they're short-lived
-
-  async function consolidateGroup(group) {
-    if (group.length < 2) return group.map((e) => e.text);
-    const list = group.map((e, i) => `${i}: ${e.text}`).join("\n");
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: `You are normalizing a fact store. Given a numbered list of facts, return a cleaned version.
-
-Step 1 — Split: if any entry contains multiple distinct facts bundled together (e.g. joined by "and", "also", "while", or a comma listing unrelated things), split each into separate atomic entries. One fact per entry.
-
-Step 2 — Deduplicate: drop any entry that is fully covered by another.
-
-Step 3 — Merge: only merge entries that are about the exact same specific thing (e.g. two entries about the same person's job). Do NOT merge entries just because they share a broad theme like "music" or "sports".
-
-Rules:
-- Each output entry should express exactly one fact
-- Preserve all unique information — do not lose anything
-- Keep entries short and specific
-- Return JSON: {"facts": ["fact1", "fact2", ...]}`,
-        },
-        { role: "user", content: list },
-      ],
-    });
-    const result = JSON.parse(response.choices[0].message.content).facts;
-    if (!Array.isArray(result)) throw new Error("unexpected shape");
-    return result;
-  }
-
-  const [consolidatedFacts, consolidatedDirectives] = await Promise.all([
-    consolidateGroup(facts),
-    consolidateGroup(directives),
-  ]);
-
-  const now = new Date().toISOString();
-  // Preserve episodic and provisional entries — they're not consolidated
-  const preserved = entries.filter((e) => e.category === "episodic" || e.category === "provisional");
-
-  const newEntries = [
-    ...consolidatedFacts.map((text) => ({
-      id: makeId(),
-      text,
-      category: "fact",
-      confidence: 1.0,
-      source: "consolidation",
-      lifespan: "permanent",
-      expiresAt: null,
-      scope: "global",
-      embedded: false,
-      addedBy: "consolidation",
-      addedAt: now,
-      updatedAt: null,
-    })),
-    ...consolidatedDirectives.map((text) => ({
-      id: makeId(),
-      text,
-      category: "directive",
-      confidence: 1.0,
-      source: "consolidation",
-      lifespan: "permanent",
-      expiresAt: null,
-      scope: "global",
-      embedded: false,
-      addedBy: "consolidation",
-      addedAt: now,
-      updatedAt: null,
-    })),
-    ...preserved,
-  ];
-
-  save(newEntries);
-
-  // Rebuild the lore index from scratch — all IDs have changed
-  if (fs.existsSync(loreIndexPath)) {
-    fs.rmSync(loreIndexPath, { recursive: true, force: true });
-  }
-
-  const before = entries.length;
-  const after = newEntries.length;
-  console.log(JSON.stringify({ ts: now, stage: "lore_consolidated", before, after }));
-  return { before, after };
-}
-
-// ---------------------------------------------------------------------------
 // Public: implicit extraction
 // ---------------------------------------------------------------------------
 
@@ -663,7 +588,8 @@ export async function addImplicit(text, source = "bot-inferred") {
   // Check against existing facts — skip if already known
   const facts = entries.filter((e) => e.category === "fact");
   if (facts.length > 0) {
-    const factResult = await coalesce(text, facts);
+    const factCandidates = await preFilterCandidates(text, facts);
+    const factResult = await coalesce(text, factCandidates);
     if (factResult.action === "skip" || factResult.action === "merge") {
       console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_skip", reason: "known_fact", text: text.slice(0, 80) }));
       return { action: "known" };
@@ -673,13 +599,14 @@ export async function addImplicit(text, source = "bot-inferred") {
   // Check against existing provisionals — promote if matched
   const provisionals = entries.filter((e) => e.category === "provisional");
   if (provisionals.length > 0) {
-    const provResult = await coalesce(text, provisionals);
+    const provCandidates = await preFilterCandidates(text, provisionals);
+    const provResult = await coalesce(text, provCandidates);
     if (
       (provResult.action === "skip" || provResult.action === "merge") &&
       typeof provResult.index === "number" &&
-      provisionals[provResult.index]
+      provCandidates[provResult.index]
     ) {
-      const target = provisionals[provResult.index];
+      const target = provCandidates[provResult.index];
       const promotedText = provResult.action === "merge" ? provResult.merged : target.text;
       const actualIndex = entries.findIndex((e) => e.id === target.id);
       if (actualIndex !== -1) {

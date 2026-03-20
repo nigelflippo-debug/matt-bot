@@ -47,8 +47,8 @@ AES-256-GCM using Node's built-in `crypto` module. No new dependencies.
 7. [x] Run `npm run encrypt` locally to produce `data/enriched.enc` and `data/corpus.enc`
 8. [x] Verify bot starts and retrieves correctly with encrypted files
 9. [x] Update `package.json` scripts: add `npm run encrypt`
-10. [ ] Update Railway env vars with `CONTENT_ENCRYPTION_KEY`
-11. [ ] Redeploy — confirm plaintext files are absent from Railway
+10. [x] Update Railway env vars with `CONTENT_ENCRYPTION_KEY` — done 2026-03-19
+11. [ ] Confirm old plaintext `enriched.json` is absent from Railway volume (bot has redeployed since; `.enc` takes priority but file may still be on the volume — low priority cleanup)
 
 ## Migration (existing Railway deployment)
 The plaintext `enriched.json` already exists on Railway from a prior deploy. Steps to migrate:

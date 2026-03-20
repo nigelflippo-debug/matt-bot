@@ -12,7 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
-import { addLore, removeLore, getAllLore, consolidateLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, applyDecay, extractImplicit, addImplicit } from "../rag/lore-store.js";
+import { addLore, removeLore, getAllLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, applyDecay, extractImplicit, addImplicit } from "../rag/lore-store.js";
 import { logMattMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -152,20 +152,6 @@ client.on(Events.MessageCreate, async (message) => {
       content: `**${sorted.length} entries** (${categorySummary}) — ${confidenceSummary} confidence`,
       files: [{ attachment: buf, name: "lore.json" }],
     });
-    return;
-  }
-
-  // Handle "consolidate memory" — run full coalesce pass over existing entries
-  if (/^consolidate memory$/i.test(userMessage)) {
-    try {
-      await message.channel.sendTyping();
-      const { before, after } = await consolidateLore();
-      log(requestId, "lore_consolidated", { before, after });
-      await message.reply(`Done. Went from ${before} to ${after} entries.`);
-    } catch (err) {
-      log(requestId, "lore_consolidate_error", { message: err.message });
-      await message.reply(`Something went wrong during consolidation.`);
-    }
     return;
   }
 
