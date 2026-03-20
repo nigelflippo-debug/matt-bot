@@ -8,6 +8,11 @@ node_modules/
 data/index/
 data/index-pair/
 data/index-window/
+data/index-lore/
+
+# Plaintext corpus data — deploy encrypted .enc versions instead
+data/enriched.json
+data/corpus.json
 
 # Raw chat exports — personal data, never commit
 chat-data/

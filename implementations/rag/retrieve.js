@@ -15,26 +15,28 @@
 import "dotenv/config";
 import OpenAI from "openai";
 import { LocalIndex } from "vectra";
-import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { loadEncryptedJson } from "./crypto-utils.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pairIndexPath = path.resolve(__dirname, "../../data/index-pair");
 const windowIndexPath = path.resolve(__dirname, "../../data/index-window");
-const enrichedPath = path.resolve(__dirname, "../../data/enriched.json");
-const corpusPath = path.resolve(__dirname, "../../data/corpus.json");
+const enrichedEncPath = path.resolve(__dirname, "../../data/enriched.enc");
+const enrichedPath    = path.resolve(__dirname, "../../data/enriched.json");
+const corpusEncPath   = path.resolve(__dirname, "../../data/corpus.enc");
+const corpusPath      = path.resolve(__dirname, "../../data/corpus.json");
 
 const client = new OpenAI();
 const pairIndex = new LocalIndex(pairIndexPath);
 const windowIndex = new LocalIndex(windowIndexPath);
 
 // Load all enriched records once at startup for keyword search + ID lookup
-const allRecords = JSON.parse(fs.readFileSync(enrichedPath, "utf8"));
+const allRecords = loadEncryptedJson(enrichedEncPath, enrichedPath);
 const recordById = new Map(allRecords.map((r) => [r.id, r]));
 
 // Load full corpus and group by chat for lore search
-const fullCorpus = JSON.parse(fs.readFileSync(corpusPath, "utf8"));
+const fullCorpus = loadEncryptedJson(corpusEncPath, corpusPath);
 const corpusByChat = {};
 for (const msg of fullCorpus) {
   if (!corpusByChat[msg.chat]) corpusByChat[msg.chat] = [];

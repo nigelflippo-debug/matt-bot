@@ -287,7 +287,7 @@ export async function embedPendingLore() {
     await loreIndex.upsertItem({
       id: pending[i].id,
       vector: embResponse.data[i].embedding,
-      metadata: { id: pending[i].id, text: pending[i].text },
+      metadata: { id: pending[i].id },
     });
   }
   await loreIndex.endUpdate();

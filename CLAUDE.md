@@ -42,6 +42,8 @@ At the start of every session, read the most recent session file in `sessions/` 
 
 @implementations/rag/plan.md
 
+@implementations/privacy-store/plan.md
+
 ## Notes
 
 - Add SOPs in `sops/` as markdown files describing each procedure

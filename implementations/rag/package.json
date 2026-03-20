@@ -6,6 +6,7 @@
     "pipeline": "node pipeline.js",
     "enrich": "node enrich.js",
     "index": "node index.js",
+    "encrypt": "node encrypt.js",
     "test": "node test.js"
   },
   "dependencies": {
