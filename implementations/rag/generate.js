@@ -22,7 +22,7 @@ function formatExamples(results) {
  * Inserts before "## Final Instruction" so the static examples and retrieved
  * examples are both present.
  */
-export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], retrievedFacts = [], directives = []) {
+export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], retrievedFacts = [], directives = [], discordExamples = []) {
   let injection = "";
 
   // Directives: behavioral rules the group has set — always inject.
@@ -65,7 +65,7 @@ ${loreText}
 `;
   }
 
-  // Style examples: real Matt replies in similar situations.
+  // Style examples: real Matt replies in similar situations (WhatsApp corpus).
   const exampleBlock = formatExamples(results);
   injection += `## What Matt actually said in similar situations
 
@@ -76,6 +76,20 @@ ${exampleBlock}
 ---
 
 `;
+
+  // Discord examples: recent real Matt messages from this Discord server.
+  if (discordExamples.length > 0) {
+    const discordBlock = discordExamples.map(({ response }) => response).join("\n");
+    injection += `## What Matt has said in this Discord recently
+
+These are real Matt messages from this exact server. Very high signal — weight these heavily.
+
+${discordBlock}
+
+---
+
+`;
+  }
 
   // Anti-repetition: surface what Matt just said so the model avoids recycling it.
   if (recentBotReplies.length > 0) {

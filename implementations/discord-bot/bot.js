@@ -13,6 +13,7 @@ import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
 import { addLore, removeLore, getAllLore, consolidateLore, embedPendingLore, retrieveLore, getDirectives } from "../rag/lore-store.js";
+import { logMattMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -74,10 +75,10 @@ client.on(Events.MessageCreate, async (message) => {
   // Outside gweeod, only respond when explicitly mentioned
   if (!inGweeod && !botMentioned) return;
 
-  // Strip the mention(s) from the message text
-  const userMessage = message.content
-    .replace(/<@!?\d+>/g, "")
-    .trim();
+  // Strip the mention(s) from the message text; detect --debug flag
+  const rawMessage = message.content.replace(/<@!?\d+>/g, "").trim();
+  const debugMode = /--debug\s*$/i.test(rawMessage);
+  const userMessage = rawMessage.replace(/--debug\s*$/i, "").trim();
 
   // Collect image attachments
   const imageUrls = [...message.attachments.values()]
@@ -185,6 +186,16 @@ client.on(Events.MessageCreate, async (message) => {
 
     log(requestId, "context_fetched", { priorMessageCount: priorMessages.length });
 
+    // If this is real Matt posting (not the bot), log the exchange as training data
+    const mattDiscordId = process.env.MATT_DISCORD_USER_ID;
+    if (mattDiscordId && message.author.id === mattDiscordId && userMessage) {
+      const contextWindow = priorMessages
+        .slice(-3)
+        .map(({ name, text }) => `${name}: ${text}`)
+        .join("\n");
+      logMattMessage(contextWindow, `Matt: ${userMessage}`);
+    }
+
     // Short window for retrieval — just enough to resolve references in the current message
     const conversationContext = priorMessages
       .slice(-RETRIEVAL_CONTEXT_MESSAGES)
@@ -214,13 +225,14 @@ client.on(Events.MessageCreate, async (message) => {
       ms: t2 - t1,
     });
 
-    // Embed any pending lore entries, then retrieve relevant facts + directives
-    await embedPendingLore();
-    const [retrievedFacts, directives] = await Promise.all([
+    // Embed any pending lore + discord entries, then retrieve relevant facts + directives + discord examples
+    await Promise.all([embedPendingLore(), embedPendingDiscord()]);
+    const [retrievedFacts, directives, discordExamples] = await Promise.all([
       retrieveLore(retrievalQuery, 5),
       Promise.resolve(getDirectives()),
+      retrieveDiscord(retrievalQuery, 3),
     ]);
-    log(requestId, "lore_retrieved", { facts: retrievedFacts.length, directives: directives.length });
+    log(requestId, "lore_retrieved", { facts: retrievedFacts.length, directives: directives.length, discordExamples: discordExamples.length });
 
     // Extract the last few Matt replies to discourage repetition
     const recentBotReplies = history
@@ -228,7 +240,7 @@ client.on(Events.MessageCreate, async (message) => {
       .slice(-3)
       .map((m) => m.content);
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, retrievedFacts, directives);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, retrievedFacts, directives, discordExamples);
 
     log(requestId, "generating");
     const t3 = Date.now();
@@ -245,6 +257,41 @@ client.on(Events.MessageCreate, async (message) => {
     clearInterval(typingInterval);
     await message.reply(reply);
     log(requestId, "replied");
+
+    if (debugMode) {
+      const lines = ["**[debug]**"];
+
+      if (directives.length > 0) {
+        lines.push(`\n**directives (${directives.length})**`);
+        directives.forEach((e) => lines.push(`• ${e.text}`));
+      }
+
+      if (retrievedFacts.length > 0) {
+        lines.push(`\n**lore facts (${retrievedFacts.length})**`);
+        retrievedFacts.forEach((e) => lines.push(`• ${e.text}`));
+      }
+
+      if (loreWindows.length > 0) {
+        lines.push(`\n**corpus windows (${loreWindows.length})**`);
+        loreWindows.forEach((w) => lines.push(`\`\`\`\n${w.text.slice(0, 200)}\n\`\`\``));
+      }
+
+      if (discordExamples.length > 0) {
+        lines.push(`\n**discord examples (${discordExamples.length})**`);
+        discordExamples.forEach((e) => lines.push(`• ${e.response}`));
+      }
+
+      if (results.length > 0) {
+        lines.push(`\n**rag examples (${results.length})**`);
+        results.forEach((r) => lines.push(`• ${r.response}`));
+      }
+
+      const debugText = lines.join("\n");
+      // Split at 1900 chars to stay under Discord's 2000 char limit
+      for (let i = 0; i < debugText.length; i += 1900) {
+        await message.channel.send(debugText.slice(i, i + 1900));
+      }
+    }
   } catch (err) {
     clearInterval(typingInterval);
     log(requestId, "error", { message: err.message, stack: err.stack });

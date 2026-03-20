@@ -9,6 +9,10 @@ data/index/
 data/index-pair/
 data/index-window/
 data/index-lore/
+data/index-discord/
+
+# Discord conversation pairs — personal data, persisted on Railway volume
+data/discord-pairs.json
 
 # Plaintext corpus data — deploy encrypted .enc versions instead
 data/enriched.json
