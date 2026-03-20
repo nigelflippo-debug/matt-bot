@@ -45,6 +45,12 @@ const HISTORY_MESSAGES = 4;
 // How many to use as retrieval context (just enough to resolve references)
 const RETRIEVAL_CONTEXT_MESSAGES = 3;
 
+// Admin user IDs — comma-separated Discord user IDs in ADMIN_USER_IDS env var
+const ADMIN_IDS = new Set(
+  (process.env.ADMIN_USER_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean)
+);
+function isAdmin(userId) { return ADMIN_IDS.has(userId); }
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -121,6 +127,10 @@ client.on(Events.MessageCreate, async (message) => {
   const rememberMatch = userMessage.match(/^remember(?:\s+for\s+now)?:\s*(.+)/i);
   const rememberIsEpisodic = /^remember\s+for\s+now:/i.test(userMessage);
   if (rememberMatch) {
+    if (!rememberIsEpisodic && !isAdmin(message.author.id)) {
+      await message.reply(`nah`);
+      return;
+    }
     // Prefix "for now:" so the classifier sees the episodic hint in the text
     const fact = rememberIsEpisodic ? `for now: ${rememberMatch[1].trim()}` : rememberMatch[1].trim();
     const result = await addLore(fact, senderName);
@@ -169,6 +179,10 @@ client.on(Events.MessageCreate, async (message) => {
   // Handle "forget: X" — remove lore entries matching a keyword
   const forgetMatch = userMessage.match(/^forget:\s*(.+)/i);
   if (forgetMatch) {
+    if (!isAdmin(message.author.id)) {
+      await message.reply(`nah`);
+      return;
+    }
     const keyword = forgetMatch[1].trim();
     const { removed, entries: removedEntries } = await removeLore(keyword);
     log(requestId, "lore_removed", { keyword, removed });
