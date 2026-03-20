@@ -116,38 +116,20 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  // Handle "list memory" — display all current lore entries
+  // Handle "list memory" — send all lore entries as a JSON file attachment
   if (/^list memory$/i.test(userMessage)) {
     const entries = getAllLore();
     if (entries.length === 0) {
       await message.reply(`No lore stored yet.`);
       return;
     }
-    const lines = entries.map((e, i) => {
-      const tags = [e.category ?? "fact"];
-      if (e.source && e.source !== "explicit") tags.push(e.source);
-      if (e.confidence !== undefined && e.confidence < 1.0) tags.push(`conf:${e.confidence}`);
-      if (e.expiresAt) {
-        const exp = new Date(e.expiresAt);
-        const dateStr = exp.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-        tags.push(`expires ${dateStr}`);
-      }
-      return `${i + 1}. [${tags.join(" • ")}] ${e.text}`;
+    const counts = entries.reduce((acc, e) => { acc[e.category] = (acc[e.category] ?? 0) + 1; return acc; }, {});
+    const summary = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
+    const buf = Buffer.from(JSON.stringify(entries, null, 2), "utf8");
+    await message.reply({
+      content: `**${entries.length} entries** (${summary})`,
+      files: [{ attachment: buf, name: "lore.json" }],
     });
-    const chunks = [];
-    let current = `**Lore (${entries.length} entries):**\n`;
-    for (const line of lines) {
-      if (current.length + line.length + 1 > 1900) {
-        chunks.push(current.trimEnd());
-        current = "";
-      }
-      current += line + "\n";
-    }
-    if (current.trim()) chunks.push(current.trimEnd());
-    await message.reply(chunks[0]);
-    for (const chunk of chunks.slice(1)) {
-      await message.channel.send(chunk);
-    }
     return;
   }
 
@@ -272,38 +254,18 @@ client.on(Events.MessageCreate, async (message) => {
     log(requestId, "replied");
 
     if (debugMode) {
-      const lines = ["**[debug]**"];
-
-      if (directives.length > 0) {
-        lines.push(`\n**directives (${directives.length})**`);
-        directives.forEach((e) => lines.push(`• ${e.text}`));
-      }
-
-      if (retrievedFacts.length > 0) {
-        lines.push(`\n**lore facts (${retrievedFacts.length})**`);
-        retrievedFacts.forEach((e) => lines.push(`• ${e.text}`));
-      }
-
-      if (loreWindows.length > 0) {
-        lines.push(`\n**corpus windows (${loreWindows.length})**`);
-        loreWindows.forEach((w) => lines.push(`\`\`\`\n${w.text.slice(0, 200)}\n\`\`\``));
-      }
-
-      if (discordExamples.length > 0) {
-        lines.push(`\n**discord examples (${discordExamples.length})**`);
-        discordExamples.forEach((e) => lines.push(`• ${e.response}`));
-      }
-
-      if (results.length > 0) {
-        lines.push(`\n**rag examples (${results.length})**`);
-        results.forEach((r) => lines.push(`• ${r.response}`));
-      }
-
-      const debugText = lines.join("\n");
-      // Split at 1900 chars to stay under Discord's 2000 char limit
-      for (let i = 0; i < debugText.length; i += 1900) {
-        await message.channel.send(debugText.slice(i, i + 1900));
-      }
+      const debugData = {
+        directives: directives.map((e) => e.text),
+        lore_facts: retrievedFacts.map((e) => e.text),
+        corpus_windows: loreWindows.map((w) => w.text),
+        discord_examples: discordExamples.map((e) => e.response),
+        rag_examples: results.map((r) => r.response),
+      };
+      const buf = Buffer.from(JSON.stringify(debugData, null, 2), "utf8");
+      await message.channel.send({
+        content: `**[debug]** directives:${directives.length} facts:${retrievedFacts.length} corpus:${loreWindows.length} discord:${discordExamples.length} rag:${results.length}`,
+        files: [{ attachment: buf, name: "debug.json" }],
+      });
     }
   } catch (err) {
     clearInterval(typingInterval);
