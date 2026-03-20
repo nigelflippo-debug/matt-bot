@@ -12,7 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
-import { addLore, removeLore, getAllLore, consolidateLore, embedPendingLore, retrieveLore, getDirectives } from "../rag/lore-store.js";
+import { addLore, removeLore, getAllLore, consolidateLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired } from "../rag/lore-store.js";
 import { logMattMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -59,7 +59,8 @@ function log(requestId, stage, data = {}) {
 }
 
 client.once(Events.ClientReady, (c) => {
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag }));
+  const pruned = pruneExpired();
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag, prunedLore: pruned }));
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -103,7 +104,7 @@ client.on(Events.MessageCreate, async (message) => {
     const result = await addLore(fact, senderName);
     log(requestId, "lore_write", { fact, addedBy: senderName, action: result.action });
     const acks = {
-      added:   `Got it. I'll remember that.`,
+      added:   result.category === "episodic" ? `Got it. I'll remember that for now (expires in 7 days).` : `Got it. I'll remember that.`,
       merged:  `Yeah I already kind of knew that, updated.`,
       skipped: `I already know that.`,
       capped:  `My brain is full. Someone needs to forget something first.`,

@@ -1,11 +1,11 @@
 /**
  * lore-store.js — persistent user-curated memory store
  *
- * Two categories:
- *   directive — behavioral rules for the bot (word bans, style rules, etc.)
- *               Always injected into the system prompt. Cap: DIRECTIVE_CAP.
- *   fact      — everything else (group lore, personal details, ephemeral notes)
- *               Embedded lazily and retrieved semantically at query time. Cap: FACT_CAP.
+ * Four categories:
+ *   directive   — behavioral rules for the bot. Always injected into system prompt. Cap: DIRECTIVE_CAP.
+ *   fact        — permanent lore, personal details, events. Retrieved semantically at query time.
+ *   episodic    — temporary context (expires in 7 days). Retrieved semantically; pruned at startup.
+ *   provisional — uncertain/inferred (future: implicit extraction). Not injected into prompts.
  *
  * Written via "@MattBot remember: X" in Discord.
  */
@@ -42,11 +42,21 @@ function load() {
   }
 
   // Migration: backfill id, category, embedded for pre-v2 entries
+  // Also backfill v3 governance fields: confidence, source, lifespan, expiresAt, scope, updatedAt
   let dirty = false;
   for (const entry of entries) {
     if (!entry.id) { entry.id = makeId(); dirty = true; }
     if (!entry.category) { entry.category = "fact"; dirty = true; }
     if (entry.embedded === undefined) { entry.embedded = false; dirty = true; }
+    if (entry.confidence === undefined) { entry.confidence = 1.0; dirty = true; }
+    if (entry.source === undefined) {
+      entry.source = entry.addedBy === "consolidation" ? "bulk-import" : "explicit";
+      dirty = true;
+    }
+    if (entry.lifespan === undefined) { entry.lifespan = "permanent"; dirty = true; }
+    if (!Object.prototype.hasOwnProperty.call(entry, "expiresAt")) { entry.expiresAt = null; dirty = true; }
+    if (entry.scope === undefined) { entry.scope = "global"; dirty = true; }
+    if (!Object.prototype.hasOwnProperty.call(entry, "updatedAt")) { entry.updatedAt = null; dirty = true; }
   }
   if (dirty) fs.writeFileSync(lorePath, JSON.stringify(entries, null, 2));
 
@@ -58,22 +68,52 @@ function save(entries) {
 }
 
 // ---------------------------------------------------------------------------
+// Expiry
+// ---------------------------------------------------------------------------
+
+/**
+ * Remove entries whose expiresAt is set and in the past.
+ * Call at startup. Returns the number of entries pruned.
+ */
+export function pruneExpired() {
+  const entries = load();
+  const now = new Date();
+  const kept = [];
+  const pruned = [];
+
+  for (const entry of entries) {
+    if (entry.expiresAt) {
+      let expires;
+      try { expires = new Date(entry.expiresAt); } catch { kept.push(entry); continue; }
+      if (isNaN(expires.getTime())) { kept.push(entry); continue; }
+      if (expires < now) { pruned.push(entry); continue; }
+    }
+    kept.push(entry);
+  }
+
+  if (pruned.length > 0) {
+    save(kept);
+    console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_pruned", count: pruned.length, ids: pruned.map((e) => e.id) }));
+  }
+
+  return pruned.length;
+}
+
+// ---------------------------------------------------------------------------
 // LLM: classify
 // ---------------------------------------------------------------------------
 
 const SPLIT_OR_CLASSIFY_SYSTEM = `You process a memory entry for a fact store. Break it into one or more categorized parts.
 
-A "directive" is a behavioral rule for the bot — how it should speak or respond. Examples:
-- "Don't use the word delve"
-- "Stop saying shitshow all the time"
-- "Never bring up X topic"
-
-A "fact" is everything else: a memory, lore, a personal detail, an event, a note.
+Categories:
+- "directive" — a behavioral rule for the bot (how it should speak or respond). Examples: "Don't use the word delve", "Never bring up X topic"
+- "fact" — a permanent memory, lore, personal detail, or event. Default for most entries.
+- "episodic" — explicitly temporary information. Use when the input contains phrases like "for now", "this weekend", "temporarily", "just for today", or other clear short-term signals.
 
 Return a JSON object with a "parts" array. Each part has "text" and "category".
 If the entry is a single thing, return one part. If it mixes facts and directives, split them into separate parts — one per distinct fact or rule.
 
-{"parts": [{"text": "...", "category": "fact"|"directive"}, ...]}
+{"parts": [{"text": "...", "category": "fact"|"directive"|"episodic"}, ...]}
 
 Only split when parts are clearly distinct. When in doubt, return a single part.
 Respond with JSON only — no markdown.`;
@@ -83,6 +123,7 @@ Respond with JSON only — no markdown.`;
  * Returns an array of {text, category} objects.
  */
 async function splitOrClassify(text) {
+  const VALID_CATEGORIES = new Set(["directive", "fact", "episodic"]);
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -97,7 +138,7 @@ async function splitOrClassify(text) {
     if (Array.isArray(result.parts) && result.parts.length > 0) {
       return result.parts.map((p) => ({
         text: p.text ?? text,
-        category: p.category === "directive" ? "directive" : "fact",
+        category: VALID_CATEGORIES.has(p.category) ? p.category : "fact",
       }));
     }
     return [{ text, category: "fact" }];
@@ -206,13 +247,24 @@ async function addSingle(text, category, addedBy) {
     }
   }
 
+  const confidenceByCategory = { directive: 1.0, fact: 1.0, episodic: 0.8, provisional: 0.6 };
+  const lifespanByCategory = { directive: "permanent", fact: "permanent", episodic: "temporary", provisional: "long-lived" };
+  const now = new Date();
+  const expiresAt = category === "episodic" ? new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString() : null;
+
   entries.push({
     id: makeId(),
     text,
     category,
+    confidence: confidenceByCategory[category] ?? 1.0,
+    source: "explicit",
+    lifespan: lifespanByCategory[category] ?? "permanent",
+    expiresAt,
+    scope: "global",
     embedded: false,
     addedBy,
-    addedAt: new Date().toISOString(),
+    addedAt: now.toISOString(),
+    updatedAt: null,
   });
   save(entries);
   return { action: "added", category };
@@ -264,7 +316,7 @@ export async function removeLore(keyword) {
  */
 export async function embedPendingLore() {
   const entries = load();
-  const pending = entries.filter((e) => e.category === "fact" && e.embedded === false);
+  const pending = entries.filter((e) => (e.category === "fact" || e.category === "episodic") && e.embedded === false);
 
   if (pending.length === 0) {
     console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_embed_check", pending: 0 }));
@@ -361,6 +413,7 @@ export async function consolidateLore() {
 
   const facts = entries.filter((e) => e.category === "fact");
   const directives = entries.filter((e) => e.category === "directive");
+  // Episodic and provisional entries are excluded from consolidation — they're short-lived
 
   async function consolidateGroup(group) {
     if (group.length < 2) return group.map((e) => e.text);
@@ -400,23 +453,39 @@ Rules:
   ]);
 
   const now = new Date().toISOString();
+  // Preserve episodic and provisional entries — they're not consolidated
+  const preserved = entries.filter((e) => e.category === "episodic" || e.category === "provisional");
+
   const newEntries = [
     ...consolidatedFacts.map((text) => ({
       id: makeId(),
       text,
       category: "fact",
+      confidence: 1.0,
+      source: "consolidation",
+      lifespan: "permanent",
+      expiresAt: null,
+      scope: "global",
       embedded: false,
       addedBy: "consolidation",
       addedAt: now,
+      updatedAt: null,
     })),
     ...consolidatedDirectives.map((text) => ({
       id: makeId(),
       text,
       category: "directive",
+      confidence: 1.0,
+      source: "consolidation",
+      lifespan: "permanent",
+      expiresAt: null,
+      scope: "global",
       embedded: false,
       addedBy: "consolidation",
       addedAt: now,
+      updatedAt: null,
     })),
+    ...preserved,
   ];
 
   save(newEntries);
