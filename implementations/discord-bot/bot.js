@@ -25,7 +25,7 @@ const baseSystemPrompt = fs.readFileSync(
 const FETCH_MESSAGES = 8;
 
 // Recency buffer — tracks recently injected example IDs to prevent repetition
-const RECENCY_BUFFER_SIZE = 60;
+const RECENCY_BUFFER_SIZE = 20;
 const recentExampleIds = new Set();
 const recentExampleOrder = [];
 
