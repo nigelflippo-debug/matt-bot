@@ -156,7 +156,7 @@ const SPLIT_OR_CLASSIFY_SYSTEM = `You process a memory entry for a fact store. B
 Categories:
 - "directive" — a behavioral rule for the bot (how it should speak or respond). Examples: "Don't use the word delve", "Never bring up X topic"
 - "fact" — a permanent memory, lore, personal detail, or event. Default for most entries.
-- "episodic" — explicitly temporary information. Use when the input contains phrases like "for now", "this weekend", "temporarily", "just for today", or other clear short-term signals.
+- "episodic" — explicitly temporary information. Use when the input contains phrases like "for now", "today", "tonight", "tomorrow", "this week", "this weekend", "next week", "this month", "next month", "next year", "temporarily", "just for today", or other clear short-term signals.
 
 Return a JSON object with a "parts" array. Each part has "text" and "category".
 If the entry is a single thing, return one part. If it mixes facts and directives, split them into separate parts — one per distinct fact or rule.
@@ -270,6 +270,96 @@ async function preFilterCandidates(text, candidates, n = 20) {
 }
 
 // ---------------------------------------------------------------------------
+// Temporal TTL detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect temporal references in text and return an appropriate expiresAt ISO string.
+ * Returns null if no temporal reference is found.
+ */
+function detectTemporalExpiry(text, now = new Date()) {
+  const t = text.toLowerCase();
+
+  if (/\b(today|tonight|this morning|this afternoon|this evening)\b/.test(t)) {
+    const end = new Date(now);
+    end.setHours(23, 59, 59, 999);
+    return end.toISOString();
+  }
+
+  if (/\btomorrow\b/.test(t)) {
+    const end = new Date(now);
+    end.setDate(end.getDate() + 1);
+    end.setHours(23, 59, 59, 999);
+    return end.toISOString();
+  }
+
+  if (/\bthis weekend\b/.test(t)) {
+    const end = new Date(now);
+    const daysToSunday = ((7 - end.getDay()) % 7) || 7;
+    end.setDate(end.getDate() + daysToSunday);
+    end.setHours(23, 59, 59, 999);
+    return end.toISOString();
+  }
+
+  if (/\bthis week\b/.test(t)) {
+    const end = new Date(now);
+    const daysToSunday = ((7 - end.getDay()) % 7) || 7;
+    end.setDate(end.getDate() + daysToSunday);
+    end.setHours(23, 59, 59, 999);
+    return end.toISOString();
+  }
+
+  if (/\bnext week\b/.test(t)) {
+    const end = new Date(now);
+    const daysToSunday = ((7 - end.getDay()) % 7) || 7;
+    end.setDate(end.getDate() + daysToSunday + 7);
+    end.setHours(23, 59, 59, 999);
+    return end.toISOString();
+  }
+
+  if (/\bthis month\b/.test(t)) {
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    return end.toISOString();
+  }
+
+  if (/\bnext month\b/.test(t)) {
+    const end = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59, 999);
+    return end.toISOString();
+  }
+
+  if (/\bnext year\b/.test(t)) {
+    const end = new Date(now.getFullYear() + 1, 11, 31, 23, 59, 59, 999);
+    return end.toISOString();
+  }
+
+  const inDays = t.match(/\bin (\d+) days?\b/);
+  if (inDays) {
+    const end = new Date(now);
+    end.setDate(end.getDate() + parseInt(inDays[1]));
+    end.setHours(23, 59, 59, 999);
+    return end.toISOString();
+  }
+
+  const inWeeks = t.match(/\bin (\d+) weeks?\b/);
+  if (inWeeks) {
+    const end = new Date(now);
+    end.setDate(end.getDate() + parseInt(inWeeks[1]) * 7);
+    end.setHours(23, 59, 59, 999);
+    return end.toISOString();
+  }
+
+  const inMonths = t.match(/\bin (\d+) months?\b/);
+  if (inMonths) {
+    const end = new Date(now);
+    end.setMonth(end.getMonth() + parseInt(inMonths[1]));
+    end.setHours(23, 59, 59, 999);
+    return end.toISOString();
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Public: add
 // ---------------------------------------------------------------------------
 
@@ -323,18 +413,23 @@ async function addSingle(text, category, addedBy) {
     }
   }
 
+  const now = new Date();
+  const temporalExpiry = detectTemporalExpiry(text, now);
+  const defaultEpisodicExpiry = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const expiresAt = temporalExpiry ?? (category === "episodic" ? defaultEpisodicExpiry : null);
+  const isTemporalFact = temporalExpiry && category !== "episodic";
   const confidenceByCategory = { directive: 1.0, fact: 1.0, episodic: 0.8, provisional: 0.6 };
   const lifespanByCategory = { directive: "permanent", fact: "permanent", episodic: "temporary", provisional: "long-lived" };
-  const now = new Date();
-  const expiresAt = category === "episodic" ? new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString() : null;
+  const confidence = temporalExpiry ? 1.0 : (confidenceByCategory[category] ?? 1.0);
+  const lifespan = (isTemporalFact || category === "episodic") ? "temporary" : (lifespanByCategory[category] ?? "permanent");
 
   entries.push({
     id: makeId(),
     text,
     category,
-    confidence: confidenceByCategory[category] ?? 1.0,
+    confidence,
     source: "explicit",
-    lifespan: lifespanByCategory[category] ?? "permanent",
+    lifespan,
     expiresAt,
     scope: "global",
     embedded: false,
@@ -343,7 +438,7 @@ async function addSingle(text, category, addedBy) {
     updatedAt: null,
   });
   save(entries);
-  return { action: "added", category };
+  return { action: "added", category, temporal: !!temporalExpiry };
 }
 
 // ---------------------------------------------------------------------------
@@ -629,15 +724,16 @@ export async function addImplicit(text, source = "bot-inferred") {
 
   // New — store as provisional
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + PROVISIONAL_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const temporalExpiry = detectTemporalExpiry(text, now);
+  const defaultExpiry = new Date(now.getTime() + PROVISIONAL_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
   entries.push({
     id: makeId(),
     text,
     category: "provisional",
-    confidence: 0.6,
+    confidence: temporalExpiry ? 1.0 : 0.6,
     source,
-    lifespan: "long-lived",
-    expiresAt,
+    lifespan: temporalExpiry ? "temporary" : "long-lived",
+    expiresAt: temporalExpiry ?? defaultExpiry,
     scope: "global",
     embedded: false,
     addedBy: "bot",
@@ -646,7 +742,7 @@ export async function addImplicit(text, source = "bot-inferred") {
   });
   save(entries);
   console.log(JSON.stringify({ ts: now.toISOString(), stage: "implicit_added", text: text.slice(0, 80) }));
-  return { action: "added" };
+  return { action: "added", temporal: !!temporalExpiry };
 }
 
 /**
@@ -699,15 +795,16 @@ export async function addUserAsserted(text, addedBy = "unknown") {
   }
 
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + PROVISIONAL_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const temporalExpiry = detectTemporalExpiry(text, now);
+  const defaultExpiry = new Date(now.getTime() + PROVISIONAL_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
   entries.push({
     id: makeId(),
     text,
     category: "provisional",
-    confidence: 0.3,
+    confidence: temporalExpiry ? 1.0 : 0.3,
     source: "user-asserted",
-    lifespan: "long-lived",
-    expiresAt,
+    lifespan: temporalExpiry ? "temporary" : "long-lived",
+    expiresAt: temporalExpiry ?? defaultExpiry,
     scope: "global",
     embedded: false,
     addedBy,
@@ -716,5 +813,5 @@ export async function addUserAsserted(text, addedBy = "unknown") {
   });
   save(entries);
   console.log(JSON.stringify({ ts: now.toISOString(), stage: "user_asserted_added", addedBy, text: text.slice(0, 80) }));
-  return { action: "added" };
+  return { action: "added", temporal: !!temporalExpiry };
 }

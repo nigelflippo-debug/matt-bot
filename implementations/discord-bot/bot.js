@@ -122,14 +122,17 @@ async function runImplicitExtraction(conversationContext, requestId, message) {
     log(requestId, "implicit_extract", { found: facts.length, facts: facts.map((f) => f.slice(0, 60)) });
     let anyProvisional = false;
     let anyPromoted = false;
+    let anyTemporal = false;
     for (const fact of facts) {
       const result = await addImplicit(fact);
       log(requestId, "implicit_store", { fact: fact.slice(0, 60), action: result.action });
       if (result.action === "added") anyProvisional = true;
       if (result.action === "promoted") anyPromoted = true;
+      if (result.temporal) anyTemporal = true;
     }
     if (anyPromoted) await message.react("🧠").catch(() => {});
     if (anyProvisional) await message.react("🤔").catch(() => {});
+    if (anyTemporal) await message.react("📅").catch(() => {});
   } catch (err) {
     log(requestId, "implicit_error", { message: err.message });
   }
@@ -204,6 +207,7 @@ client.on(Events.MessageCreate, async (message) => {
       const reacts = { added: "⏳", merged: "✏️", skipped: "👍", split: "✂️" };
       const emoji = reacts[result.action];
       if (emoji) await message.react(emoji).catch(() => {});
+      if (result.temporal) await message.react("📅").catch(() => {});
     } else if (isTrusted) {
       // "remember:" from admin or trusted user — permanent
       const result = await addLore(fact, senderName);
@@ -224,6 +228,7 @@ client.on(Events.MessageCreate, async (message) => {
       };
       const emoji = reacts[result.action];
       if (emoji) await message.react(emoji).catch(() => {});
+      if (result.temporal) await message.react("📅").catch(() => {});
     } else {
       // "remember:" from non-trusted user — provisional, confidence 0.3
       const result = await addUserAsserted(fact, senderName);
@@ -237,6 +242,7 @@ client.on(Events.MessageCreate, async (message) => {
       const reacts = { added: "🤔", promoted: "🧠" };
       const emoji = reacts[result.action];
       if (emoji) await message.react(emoji).catch(() => {});
+      if (result.temporal) await message.react("📅").catch(() => {});
     }
     return;
   }
