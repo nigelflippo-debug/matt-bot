@@ -119,8 +119,8 @@ export async function generate(systemPrompt, history, userMessage, imageUrls = [
   let userContent;
   if (imageUrls.length > 0) {
     userContent = [
-      { type: "text", text: userMessage },
       ...imageUrls.map((url) => ({ type: "image_url", image_url: { url } })),
+      { type: "text", text: userMessage },
     ];
   } else {
     userContent = userMessage;
