@@ -49,9 +49,14 @@ client.on(Events.MessageCreate, async (message) => {
   // Ignore messages from bots (including ourselves)
   if (message.author.bot) return;
 
-  // Respond to everything in #gweeod, or when mentioned anywhere else
   const inGweeod = message.channel.name === "gweeod";
-  if (!inGweeod && !message.mentions.has(client.user)) return;
+  const botMentioned = message.mentions.has(client.user);
+  const onlyOthersMentioned = message.mentions.users.size > 0 && !botMentioned;
+
+  // If someone else is tagged (and not the bot), stay out of it
+  if (onlyOthersMentioned) return;
+  // Outside gweeod, only respond when explicitly mentioned
+  if (!inGweeod && !botMentioned) return;
 
   // Strip the mention(s) from the message text
   const userMessage = message.content
