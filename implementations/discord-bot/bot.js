@@ -58,7 +58,12 @@ client.on(Events.MessageCreate, async (message) => {
     .replace(/<@!?\d+>/g, "")
     .trim();
 
-  if (!userMessage) return;
+  // Collect image attachments
+  const imageUrls = [...message.attachments.values()]
+    .filter((a) => a.contentType?.startsWith("image/"))
+    .map((a) => a.url);
+
+  if (!userMessage && imageUrls.length === 0) return;
 
   const requestId = message.id.slice(-6);
   const senderName = message.member?.displayName ?? message.author.username;
@@ -201,7 +206,8 @@ client.on(Events.MessageCreate, async (message) => {
 
     log(requestId, "generating");
     const t3 = Date.now();
-    const reply = await generate(systemPrompt, history, `${senderName}: ${userMessage}`);
+    const userContent = userMessage ? `${senderName}: ${userMessage}` : `${senderName} sent an image.`;
+    const reply = await generate(systemPrompt, history, userContent, imageUrls);
     const t4 = Date.now();
 
     log(requestId, "generated", {

@@ -96,11 +96,22 @@ Vary your move. If you used a short quip last time, try a different angle this t
 /**
  * Generate a reply.
  *
- * @param {string} systemPrompt - full system prompt (base + injected examples)
- * @param {Array}  history      - prior conversation turns [{role, content}]
- * @param {string} userMessage  - the incoming message to respond to
+ * @param {string}   systemPrompt - full system prompt (base + injected examples)
+ * @param {Array}    history      - prior conversation turns [{role, content}]
+ * @param {string}   userMessage  - the incoming message to respond to
+ * @param {string[]} imageUrls    - optional image attachment URLs
  */
-export async function generate(systemPrompt, history, userMessage) {
+export async function generate(systemPrompt, history, userMessage, imageUrls = []) {
+  let userContent;
+  if (imageUrls.length > 0) {
+    userContent = [
+      { type: "text", text: userMessage },
+      ...imageUrls.map((url) => ({ type: "image_url", image_url: { url } })),
+    ];
+  } else {
+    userContent = userMessage;
+  }
+
   const response = await client.chat.completions.create({
     model: MODEL,
     max_tokens: 300,
@@ -108,7 +119,7 @@ export async function generate(systemPrompt, history, userMessage) {
     messages: [
       { role: "system", content: systemPrompt },
       ...history,
-      { role: "user", content: userMessage },
+      { role: "user", content: userContent },
     ],
   });
 
