@@ -374,13 +374,18 @@ export async function consolidateLore() {
       messages: [
         {
           role: "system",
-          content: `You are consolidating a fact store. Given a numbered list of facts, return a deduplicated, merged version.
+          content: `You are normalizing a fact store. Given a numbered list of facts, return a cleaned version.
+
+Step 1 — Split: if any entry contains multiple distinct facts bundled together (e.g. joined by "and", "also", "while", or a comma listing unrelated things), split each into separate atomic entries. One fact per entry.
+
+Step 2 — Deduplicate: drop any entry that is fully covered by another.
+
+Step 3 — Merge: only merge entries that are about the exact same specific thing (e.g. two entries about the same person's job). Do NOT merge entries just because they share a broad theme like "music" or "sports".
 
 Rules:
-- Merge entries that share a topic, person, or theme into one entry
-- Drop entries that are fully covered by another
-- Preserve all unique information — do not lose facts
-- A merged entry can be 1-2 sentences if needed to retain distinct details
+- Each output entry should express exactly one fact
+- Preserve all unique information — do not lose anything
+- Keep entries short and specific
 - Return JSON: {"facts": ["fact1", "fact2", ...]}`,
         },
         { role: "user", content: list },
