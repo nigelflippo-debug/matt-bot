@@ -180,10 +180,13 @@ client.on(Events.MessageCreate, async (message) => {
       content: isBot ? text : `${name}: ${text}`,
     }));
 
+    // For image-only messages, fall back to conversation context for retrieval
+    const retrievalQuery = userMessage || conversationContext || "reacting to an image";
+
     const t1 = Date.now();
     const [results, loreWindows] = await Promise.all([
-      retrieve(userMessage, 5, conversationContext),
-      loreSearch(userMessage, 3),
+      retrieve(retrievalQuery, 5, conversationContext),
+      loreSearch(retrievalQuery, 3),
     ]);
     const t2 = Date.now();
 
@@ -196,7 +199,7 @@ client.on(Events.MessageCreate, async (message) => {
     // Embed any pending lore entries, then retrieve relevant facts + directives
     await embedPendingLore();
     const [retrievedFacts, directives] = await Promise.all([
-      retrieveLore(userMessage, 5),
+      retrieveLore(retrievalQuery, 5),
       Promise.resolve(getDirectives()),
     ]);
     log(requestId, "lore_retrieved", { facts: retrievedFacts.length, directives: directives.length });
