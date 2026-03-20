@@ -57,13 +57,16 @@ async function runImplicitExtraction(conversationContext, requestId, message) {
   try {
     const facts = await extractImplicit(conversationContext);
     log(requestId, "implicit_extract", { found: facts.length, facts: facts.map((f) => f.slice(0, 60)) });
-    let stored = false;
+    let anyProvisional = false;
+    let anyPromoted = false;
     for (const fact of facts) {
       const result = await addImplicit(fact);
       log(requestId, "implicit_store", { fact: fact.slice(0, 60), action: result.action });
-      if (result.action === "added" || result.action === "promoted") stored = true;
+      if (result.action === "added") anyProvisional = true;
+      if (result.action === "promoted") anyPromoted = true;
     }
-    if (stored) await message.react("🧠").catch(() => {});
+    if (anyPromoted) await message.react("🧠").catch(() => {});
+    if (anyProvisional) await message.react("🤔").catch(() => {});
   } catch (err) {
     log(requestId, "implicit_error", { message: err.message });
   }
@@ -130,6 +133,14 @@ client.on(Events.MessageCreate, async (message) => {
       split:   `Got it. I split that into a fact and a rule.`,
     };
     await message.reply(acks[result.action] ?? `Got it.`);
+    const reacts = {
+      added:   result.category === "directive" ? "🫡" : result.category === "episodic" ? "⏳" : "🧠",
+      merged:  "✏️",
+      skipped: "👍",
+      split:   "✂️",
+    };
+    const emoji = reacts[result.action];
+    if (emoji) await message.react(emoji).catch(() => {});
     return;
   }
 
