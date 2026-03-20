@@ -272,7 +272,7 @@ export function loreSearch(query, topK = 3, windowSize = 4) {
  * @param {string} conversationContext - recent conversation turns (optional)
  * @returns {Array} top K enriched records
  */
-export async function retrieve(message, k = 10, conversationContext = "") {
+export async function retrieve(message, k = 10, conversationContext = "", excludeIds = new Set()) {
   // Run enrichment, keyword search, and embedding in parallel
   const [enrichedQuery, keywordResults, embResponse] = await Promise.all([
     enrichQuery(message, conversationContext),
@@ -329,10 +329,15 @@ export async function retrieve(message, k = 10, conversationContext = "") {
   const queryType = inferQueryType(message);
   const reranked = rerank(merged, keywordScores, queryType, message.length);
 
+  // Filter out recently used examples — expand pool first to compensate
+  const deduplicated = excludeIds.size > 0
+    ? reranked.filter((c) => !excludeIds.has(c.metadata.id))
+    : reranked;
+
   // Always keep the top 2 (highest confidence), then randomly sample the rest
   // from the next 18 candidates. Prevents the same examples from being injected
   // every time for similar queries.
-  const pool = reranked.slice(0, Math.max(k * 3, 20));
+  const pool = deduplicated.slice(0, Math.max(k * 3, 20));
   const guaranteed = pool.slice(0, 2);
   const candidates = pool.slice(2);
 

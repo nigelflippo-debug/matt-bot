@@ -23,6 +23,22 @@ const baseSystemPrompt = fs.readFileSync(
 
 // How many recent messages to fetch total
 const FETCH_MESSAGES = 8;
+
+// Recency buffer — tracks recently injected example IDs to prevent repetition
+const RECENCY_BUFFER_SIZE = 60;
+const recentExampleIds = new Set();
+const recentExampleOrder = [];
+
+function trackExamples(ids) {
+  for (const id of ids) {
+    if (recentExampleIds.has(id)) continue;
+    recentExampleOrder.push(id);
+    recentExampleIds.add(id);
+    if (recentExampleOrder.length > RECENCY_BUFFER_SIZE) {
+      recentExampleIds.delete(recentExampleOrder.shift());
+    }
+  }
+}
 // How many of those to pass to the model as generation history (threading)
 const HISTORY_MESSAGES = 4;
 // How many to use as retrieval context (just enough to resolve references)
@@ -186,9 +202,10 @@ client.on(Events.MessageCreate, async (message) => {
 
     const t1 = Date.now();
     const [results, loreWindows] = await Promise.all([
-      retrieve(retrievalQuery, 5, conversationContext),
+      retrieve(retrievalQuery, 5, conversationContext, recentExampleIds),
       loreSearch(retrievalQuery, 3),
     ]);
+    trackExamples(results.map((r) => r.id));
     const t2 = Date.now();
 
     log(requestId, "retrieval_complete", {
