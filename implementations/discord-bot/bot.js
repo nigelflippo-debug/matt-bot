@@ -304,7 +304,8 @@ client.on(Events.MessageCreate, async (message) => {
         const isBot = m.author.bot;
         const name = isBot ? "Matt" : m.member?.displayName ?? m.author.username;
         const text = m.content.replace(/<@!?\d+>/g, "").trim();
-        return { isBot, name, text };
+        const botDirected = m.mentions.has(client.user);
+        return { isBot, name, text, botDirected };
       })
       .filter(({ text }) => text.length > 0);
 
@@ -385,7 +386,7 @@ client.on(Events.MessageCreate, async (message) => {
     // Fire implicit extraction in background — doesn't block the reply
     if (userMessage.length >= 30) {
       const extractionContext = [
-        ...priorMessages.slice(-3).map(({ name, text }) => `${name}: ${text}`),
+        ...priorMessages.slice(-3).filter(({ botDirected }) => !botDirected).map(({ name, text }) => `${name}: ${text}`),
         `${senderName}: ${userMessage}`,
       ].join("\n");
       runImplicitExtraction(extractionContext, requestId, message).catch(() => {});

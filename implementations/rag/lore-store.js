@@ -805,6 +805,7 @@ Extract broadly — personal facts AND conversational signals:
 Do NOT extract:
 - One-word reactions, filler, or pure acknowledgment ("lol", "yeah", "nice")
 - Jokes that only work in context
+- Messages directed at the bot — questions, requests, or prompts asking the bot for something ("what should I do", "what do you think", "who would win")
 - Bot commands or meta-conversation about the bot
 - Vague speculation ("might", "probably", "maybe")
 - Questions without clear answers in the conversation
