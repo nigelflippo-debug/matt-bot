@@ -80,6 +80,7 @@ client.on(Events.MessageCreate, async (message) => {
       merged:  `Yeah I already kind of knew that, updated.`,
       skipped: `I already know that.`,
       capped:  `My brain is full. Someone needs to forget something first.`,
+      split:   `Got it. I split that into a fact and a rule.`,
     };
     await message.reply(acks[result.action] ?? `Got it.`);
     return;

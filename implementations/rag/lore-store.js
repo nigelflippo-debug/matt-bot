@@ -62,33 +62,48 @@ function save(entries) {
 // LLM: classify
 // ---------------------------------------------------------------------------
 
-const CLASSIFY_SYSTEM = `You categorize a memory entry into one of two types.
+const SPLIT_OR_CLASSIFY_SYSTEM = `You process a memory entry for a fact store. Break it into one or more categorized parts.
 
-A "directive" is a behavioral instruction for the bot — a rule about how it should respond. Examples:
+A "directive" is a behavioral rule for the bot — how it should speak or respond. Examples:
 - "Don't use the word delve"
-- "Always respond in English"
-- "Stop saying bro so much"
+- "Stop saying shitshow all the time"
 - "Never bring up X topic"
 
-A "fact" is everything else: a memory, a piece of group lore, a personal detail, an event, a temporary note, anything that is not a rule for the bot's behavior.
+A "fact" is everything else: a memory, lore, a personal detail, an event, a note.
 
-Respond with JSON only — no markdown: {"category": "directive"} or {"category": "fact"}`;
+Return a JSON object with a "parts" array. Each part has "text" and "category".
+If the entry is a single thing, return one part. If it mixes facts and directives, split them into separate parts — one per distinct fact or rule.
 
-async function classify(text) {
+{"parts": [{"text": "...", "category": "fact"|"directive"}, ...]}
+
+Only split when parts are clearly distinct. When in doubt, return a single part.
+Respond with JSON only — no markdown.`;
+
+/**
+ * Classify and optionally split a text into categorized parts.
+ * Returns an array of {text, category} objects.
+ */
+async function splitOrClassify(text) {
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: CLASSIFY_SYSTEM },
+        { role: "system", content: SPLIT_OR_CLASSIFY_SYSTEM },
         { role: "user", content: text },
       ],
     });
     const result = JSON.parse(response.choices[0].message.content);
-    return result.category === "directive" ? "directive" : "fact";
+    if (Array.isArray(result.parts) && result.parts.length > 0) {
+      return result.parts.map((p) => ({
+        text: p.text ?? text,
+        category: p.category === "directive" ? "directive" : "fact",
+      }));
+    }
+    return [{ text, category: "fact" }];
   } catch {
-    return "fact"; // default: never lose an entry due to classification failure
+    return [{ text, category: "fact" }]; // default: never lose an entry
   }
 }
 
@@ -144,15 +159,24 @@ async function coalesce(newFact, entries) {
 // ---------------------------------------------------------------------------
 
 /**
- * Add a new entry, classifying and coalescing with existing same-category entries first.
- * Returns { action: 'added' | 'merged' | 'skipped' | 'capped', category }
+ * Add a new entry, splitting if it contains both a fact and a directive,
+ * then coalescing each part with existing same-category entries.
+ * Returns { action: 'added' | 'merged' | 'skipped' | 'capped' | 'split', category? }
  */
 export async function addLore(text, addedBy = "unknown") {
+  const parts = await splitOrClassify(text);
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_classified", parts: parts.map((p) => p.category) }));
+
+  if (parts.length > 1) {
+    await Promise.all(parts.map((p) => addSingle(p.text, p.category, addedBy)));
+    return { action: "split" };
+  }
+
+  return addSingle(parts[0].text, parts[0].category, addedBy);
+}
+
+async function addSingle(text, category, addedBy) {
   const entries = load();
-
-  const category = await classify(text);
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_classified", category }));
-
   const sameCat = entries.filter((e) => e.category === category);
   const cap = category === "directive" ? DIRECTIVE_CAP : FACT_CAP;
 
@@ -162,7 +186,7 @@ export async function addLore(text, addedBy = "unknown") {
   }
 
   const result = await coalesce(text, sameCat);
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_coalesce", result }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_coalesce", category, result }));
 
   if (result.action === "skip") {
     return { action: "skipped", category };
@@ -175,7 +199,7 @@ export async function addLore(text, addedBy = "unknown") {
       entries[actualIndex] = {
         ...entries[actualIndex],
         text: result.merged,
-        embedded: false, // reset: re-embed on next query
+        embedded: false,
         updatedBy: addedBy,
         updatedAt: new Date().toISOString(),
       };
