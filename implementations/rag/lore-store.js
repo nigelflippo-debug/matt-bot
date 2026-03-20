@@ -275,34 +275,77 @@ async function addSingle(text, category, addedBy) {
 // ---------------------------------------------------------------------------
 
 /**
- * Remove all entries whose text contains the given keyword (case-insensitive).
- * Also removes matching entries from the Vectra index.
- * Returns the number of entries removed.
+ * Remove entries semantically matching the query.
+ * Facts/episodic: vector search. Directives: LLM match against full list (max 20).
+ * Returns { removed: number, entries: [{id, text, category}] }
  */
-export async function removeLore(keyword) {
+export async function removeLore(query) {
   const entries = load();
-  const lower = keyword.toLowerCase();
 
-  const toRemove = entries.filter((e) => e.text.toLowerCase().includes(lower));
-  if (toRemove.length === 0) return 0;
+  // --- Semantic search for facts/episodic via vector index ---
+  const semanticMatches = [];
+  if (await loreIndex.isIndexCreated()) {
+    const embResponse = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: [query],
+    });
+    const results = await loreIndex.queryItems(embResponse.data[0].embedding, 5);
+    const entryById = new Map(entries.map((e) => [e.id, e]));
+    for (const r of results) {
+      const entry = entryById.get(r.item.metadata.id);
+      if (entry && r.score > 0.3) semanticMatches.push(entry);
+    }
+  }
 
-  const filtered = entries.filter((e) => !e.text.toLowerCase().includes(lower));
-  save(filtered);
+  // --- LLM match for directives ---
+  const directives = entries.filter((e) => e.category === "directive");
+  const directiveMatches = [];
+  if (directives.length > 0) {
+    const list = directives.map((e, i) => `${i}: ${e.text}`).join("\n");
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: `Given a list of directives and a user query, return the indices of any directives the user is trying to remove. Only include directives that clearly match the intent. Return {"indices": []} if nothing matches.\nRespond with JSON only.`,
+        },
+        { role: "user", content: `DIRECTIVES:\n${list}\n\nQUERY: ${query}` },
+      ],
+    });
+    try {
+      const result = JSON.parse(response.choices[0].message.content);
+      for (const i of result.indices ?? []) {
+        if (directives[i]) directiveMatches.push(directives[i]);
+      }
+    } catch { /* ignore parse errors */ }
+  }
 
-  // Remove embedded fact entries from the Vectra index
+  // Deduplicate by id
+  const seen = new Set();
+  const toRemove = [...semanticMatches, ...directiveMatches].filter((e) => {
+    if (seen.has(e.id)) return false;
+    seen.add(e.id);
+    return true;
+  });
+
+  if (toRemove.length === 0) return { removed: 0, entries: [] };
+
+  const removeIds = new Set(toRemove.map((e) => e.id));
+  save(entries.filter((e) => !removeIds.has(e.id)));
+
+  // Remove from vector index
   if (await loreIndex.isIndexCreated()) {
     for (const entry of toRemove) {
-      if (entry.embedded && entry.category === "fact") {
-        try {
-          await loreIndex.deleteItem(entry.id);
-        } catch {
-          // May not be in index — ignore
-        }
+      if (entry.embedded) {
+        try { await loreIndex.deleteItem(entry.id); } catch { /* ignore */ }
       }
     }
   }
 
-  return toRemove.length;
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_removed", count: toRemove.length, ids: toRemove.map((e) => e.id) }));
+  return { removed: toRemove.length, entries: toRemove.map((e) => ({ id: e.id, text: e.text, category: e.category })) };
 }
 
 // ---------------------------------------------------------------------------

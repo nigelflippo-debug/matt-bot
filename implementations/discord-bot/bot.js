@@ -151,12 +151,13 @@ client.on(Events.MessageCreate, async (message) => {
   const forgetMatch = userMessage.match(/^forget:\s*(.+)/i);
   if (forgetMatch) {
     const keyword = forgetMatch[1].trim();
-    const removed = await removeLore(keyword);
+    const { removed, entries: removedEntries } = await removeLore(keyword);
     log(requestId, "lore_removed", { keyword, removed });
     if (removed === 0) {
       await message.reply(`I don't have anything about that.`);
     } else {
-      await message.reply(`Forgotten. Removed ${removed} thing${removed === 1 ? "" : "s"}.`);
+      const list = removedEntries.map((e) => `• [${e.category}] ${e.text}`).join("\n");
+      await message.reply(`Forgotten ${removed} thing${removed === 1 ? "" : "s"}:\n${list}`);
     }
     return;
   }
