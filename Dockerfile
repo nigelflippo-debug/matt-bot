@@ -15,12 +15,12 @@ COPY implementations/ ./implementations/
 
 # Stage data files outside the volume mount path so the volume doesn't hide them.
 # At startup we copy them into /app/data/ if not already present.
-COPY data/corpus.json data/enriched.json ./data-src/
+COPY data/corpus.enc data/enriched.enc ./data-src/
 
 # Startup: seed data files from image, build indexes if missing, then start the bot
 CMD ["sh", "-c", "\
-  cp -n /app/data-src/corpus.json /app/data/corpus.json && \
-  cp -n /app/data-src/enriched.json /app/data/enriched.json && \
+  cp -n /app/data-src/corpus.enc /app/data/corpus.enc && \
+  cp -n /app/data-src/enriched.enc /app/data/enriched.enc && \
   if [ ! -d /app/data/index-pair ] || [ ! -d /app/data/index-window ]; then \
     echo 'Indexes not found — building (this takes a few minutes)...' && \
     cd /app && node --max-old-space-size=4096 implementations/rag/index.js && \
