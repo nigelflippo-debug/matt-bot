@@ -70,7 +70,7 @@ export function logMattMessage(context, response) {
   }
 
   save(entries);
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "discord_logged", response: response.slice(0, 60) }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "discord_logged", total: entries.length, response: response.slice(0, 60) }));
 }
 
 // ---------------------------------------------------------------------------
@@ -85,7 +85,10 @@ export async function embedPendingDiscord() {
   const entries = load();
   const pending = entries.filter((e) => e.embedded === false);
 
-  if (pending.length === 0) return 0;
+  if (pending.length === 0) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "discord_embed_check", pending: 0 }));
+    return 0;
+  }
 
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "discord_embed_start", pending: pending.length }));
 
@@ -143,6 +146,6 @@ export async function retrieveDiscord(query, k = 3) {
   const entryById = new Map(entries.map((e) => [e.id, e]));
 
   const retrieved = results.map((r) => entryById.get(r.item.metadata.id)).filter(Boolean);
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "discord_retrieve", count: retrieved.length }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "discord_retrieve", count: retrieved.length, examples: retrieved.map((e) => e.response.slice(0, 60)) }));
   return retrieved;
 }
