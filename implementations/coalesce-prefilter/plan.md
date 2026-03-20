@@ -94,6 +94,13 @@ const provResult = await coalesce(text, provCandidates);
 - Existing lore Vectra index (`data/index-lore`) — no schema change, `{ id }` metadata is sufficient
 - No new npm packages
 
+## Status
+- Tasks 1–4 complete, deployed 2026-03-20 (commit `8c1a49d`)
+- Tasks 5–7 (manual verification) pending — check Railway logs for `candidateCount` field in `lore_coalesce` events
+
+## Companion decision: consolidateLore removed
+During this session, `consolidateLore()` was removed entirely. At 800 facts it hit rate limits and the facts were all legitimate — nothing to consolidate. Pre-filtering prevents duplicate accumulation upstream, making consolidation unnecessary. See `sessions/2026-03-20-coalesce-prefilter.md`.
+
 ## Open Questions
 - None
 
