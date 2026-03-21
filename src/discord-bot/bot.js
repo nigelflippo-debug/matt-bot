@@ -60,7 +60,7 @@ const ADMIN_IDS = new Set(
 function isAdmin(userId) { return ADMIN_IDS.has(userId); }
 
 // Spam timeout — track message timestamps for the designated user
-const SPAM_USER_ID = "1354979714434994306";
+const SPAM_USER_ID = process.env.SPAM_USER_ID ?? "";
 const SPAM_WINDOW_MS = 20_000;   // 20 second window
 const SPAM_THRESHOLD = 3;        // messages before timeout
 const SPAM_TIMEOUT_MS = 60_000;  // 1 minute timeout
