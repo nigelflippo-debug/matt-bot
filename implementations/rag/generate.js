@@ -7,7 +7,7 @@ import OpenAI from "openai";
 
 const client = new OpenAI();
 
-const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const MODEL = process.env.OPENAI_MODEL || "gpt-4o";
 
 /**
  * Format retrieved examples into a block to inject into the system prompt.
@@ -160,6 +160,7 @@ export async function generate(systemPrompt, history, userMessage, imageUrls = [
     model: MODEL,
     max_tokens: 300,
     temperature: 0.8,
+    frequency_penalty: 0.3,
     messages: [
       { role: "system", content: systemPrompt },
       ...history,
