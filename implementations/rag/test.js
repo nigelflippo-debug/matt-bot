@@ -1,17 +1,17 @@
 import "dotenv/config";
-import fs from "fs";
 import path from "path";
 import readline from "readline";
 import { fileURLToPath } from "url";
 import { retrieve, enrichQuery, loreSearch } from "./retrieve.js";
 import { generate, buildSystemPrompt } from "./generate.js";
+import { loadEncryptedText } from "./crypto-utils.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEBUG = process.argv.includes("--debug");
 
-const baseSystemPrompt = fs.readFileSync(
-  path.resolve(__dirname, "../persona/system-prompt.md"),
-  "utf8"
+const baseSystemPrompt = loadEncryptedText(
+  path.resolve(__dirname, "../simple/system-prompt.enc"),
+  path.resolve(__dirname, "../simple/system-prompt.md"),
 );
 
 const history = [];

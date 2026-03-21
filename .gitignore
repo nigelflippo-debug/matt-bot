@@ -14,10 +14,22 @@ data/index-discord/
 # Discord conversation pairs — personal data, persisted on Railway volume
 data/discord-pairs.json
 
-# Plaintext corpus data — deploy encrypted .enc versions instead
+# Plaintext content — deploy encrypted .enc versions instead
 data/enriched.json
 data/corpus.json
 data/lore.json
+implementations/simple/system-prompt.md
+
+# Stale persona prompt (contains personal data)
+implementations/persona/system-prompt.md
+
+# One-time data mining artifacts (contain personal data)
+implementations/simple/lore-candidates.txt
+implementations/simple/lore-extracted.md
+implementations/simple/politics-extracted.md
+
+# Session files — internal working notes
+sessions/
 
 # Raw chat exports — personal data, never commit
 chat-data/

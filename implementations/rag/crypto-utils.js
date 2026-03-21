@@ -6,6 +6,7 @@
  * Usage:
  *   - encryptFile(src, dest, key) — write encrypted file
  *   - loadEncryptedJson(encPath, jsonPath) — decrypt .enc or fall back to .json for local dev
+ *   - loadEncryptedText(encPath, plainPath) — same but returns raw text instead of parsed JSON
  */
 
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
@@ -70,4 +71,28 @@ export function loadEncryptedJson(encPath, jsonPath) {
   }
 
   throw new Error(`Neither ${encPath} nor ${jsonPath} found.`);
+}
+
+/**
+ * Load a text file, preferring the encrypted .enc version.
+ * Same fallback logic as loadEncryptedJson but returns a string, not parsed JSON.
+ */
+export function loadEncryptedText(encPath, plainPath) {
+  if (existsSync(encPath)) {
+    const keyHex = process.env.CONTENT_ENCRYPTION_KEY;
+    if (!keyHex) {
+      throw new Error(
+        `Encrypted file found at ${encPath} but CONTENT_ENCRYPTION_KEY is not set.`
+      );
+    }
+    const key = keyFromHex(keyHex);
+    const buf = readFileSync(encPath);
+    return decryptBuffer(buf, key).toString("utf8");
+  }
+
+  if (existsSync(plainPath)) {
+    return readFileSync(plainPath, "utf8");
+  }
+
+  throw new Error(`Neither ${encPath} nor ${plainPath} found.`);
 }

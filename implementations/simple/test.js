@@ -7,19 +7,19 @@
  */
 
 import "dotenv/config";
-import fs from "fs";
 import path from "path";
 import readline from "readline";
 import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
+import { loadEncryptedText } from "../rag/crypto-utils.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEBUG = process.argv.includes("--debug");
 
-const baseSystemPrompt = fs.readFileSync(
+const baseSystemPrompt = loadEncryptedText(
+  path.resolve(__dirname, "./system-prompt.enc"),
   path.resolve(__dirname, "./system-prompt.md"),
-  "utf8"
 );
 
 const history = [];

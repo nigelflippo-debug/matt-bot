@@ -14,12 +14,13 @@ import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
 import { addLore, removeLore, getAllLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, applyDecay, extractImplicit, addImplicit, addUserAsserted, attributePersons, deduplicateLore } from "../rag/lore-store.js";
 import { logMattMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
+import { loadEncryptedText } from "../rag/crypto-utils.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const baseSystemPrompt = fs.readFileSync(
+const baseSystemPrompt = loadEncryptedText(
+  path.resolve(__dirname, "../simple/system-prompt.enc"),
   path.resolve(__dirname, "../simple/system-prompt.md"),
-  "utf8"
 );
 
 // How many recent messages to fetch total

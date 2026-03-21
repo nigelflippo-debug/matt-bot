@@ -1,10 +1,6 @@
 /**
  * encrypt.js — encrypt content files before deployment
  *
- * Reads:
- *   data/enriched.json  → data/enriched.enc
- *   data/corpus.json    → data/corpus.enc
- *
  * Requires CONTENT_ENCRYPTION_KEY in .env (64-char hex string).
  *
  * Generate a key:
@@ -22,11 +18,13 @@ import { keyFromHex, encryptFile } from "./crypto-utils.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.resolve(__dirname, "../../data");
+const implDir = path.resolve(__dirname, "..");
 
 const FILES = [
-  { src: "enriched.json", dest: "enriched.enc" },
-  { src: "corpus.json",   dest: "corpus.enc"   },
-  { src: "lore.json",     dest: "lore.enc"     },
+  { src: "enriched.json", dest: "enriched.enc", dir: dataDir },
+  { src: "corpus.json",   dest: "corpus.enc",   dir: dataDir },
+  { src: "lore.json",     dest: "lore.enc",     dir: dataDir },
+  { src: "system-prompt.md", dest: "system-prompt.enc", dir: path.join(implDir, "simple") },
 ];
 
 const keyHex = process.env.CONTENT_ENCRYPTION_KEY;
@@ -37,9 +35,9 @@ if (!keyHex) {
 
 const key = keyFromHex(keyHex);
 
-for (const { src, dest } of FILES) {
-  const srcPath  = path.join(dataDir, src);
-  const destPath = path.join(dataDir, dest);
+for (const { src, dest, dir } of FILES) {
+  const srcPath  = path.join(dir, src);
+  const destPath = path.join(dir, dest);
 
   if (!existsSync(srcPath)) {
     console.warn(`  skipping ${src} — file not found`);
