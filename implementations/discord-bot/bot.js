@@ -12,7 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
-import { addLore, removeLore, getAllLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, applyDecay, extractImplicit, addImplicit, addUserAsserted, attributePersons } from "../rag/lore-store.js";
+import { addLore, removeLore, getAllLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, applyDecay, extractImplicit, addImplicit, addUserAsserted, attributePersons, deduplicateLore } from "../rag/lore-store.js";
 import { logMattMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -149,6 +149,8 @@ client.once(Events.ClientReady, async (c) => {
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag, prunedLore: pruned, decayed: decay.decayed, decayPruned: decay.pruned }));
   // Attribute person names to existing entries that predate person tagging — no-op after first run
   attributePersons().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_error", message: err.message })));
+  // Deduplicate legacy lore entries — no-op once store is clean
+  deduplicateLore().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_error", message: err.message })));
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -311,9 +313,9 @@ client.on(Events.MessageCreate, async (message) => {
 
     log(requestId, "context_fetched", { priorMessageCount: priorMessages.length });
 
-    // If this is real Matt posting (not the bot), log the exchange as training data
+    // If this is real Matt posting (not the bot, not directed at the bot), log the exchange as training data
     const mattDiscordId = process.env.MATT_DISCORD_USER_ID;
-    if (mattDiscordId && message.author.id === mattDiscordId && userMessage) {
+    if (mattDiscordId && message.author.id === mattDiscordId && userMessage && !message.mentions.has(client.user)) {
       const contextWindow = priorMessages
         .slice(-3)
         .map(({ name, text }) => `${name}: ${text}`)

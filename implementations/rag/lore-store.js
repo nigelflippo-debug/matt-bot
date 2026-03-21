@@ -696,6 +696,100 @@ export function getAllLore() {
 }
 
 // ---------------------------------------------------------------------------
+// Public: deduplicateLore — one-time post-deploy cleanup of legacy duplicates
+// ---------------------------------------------------------------------------
+
+/**
+ * Find and resolve near-duplicate fact/episodic entries using vector similarity + coalesce.
+ * Processes entries oldest-first (treating older entries as canonical).
+ * Only runs coalesce on pairs with similarity score > DEDUP_THRESHOLD — avoids
+ * unnecessary API calls for entries that are clearly distinct.
+ * Idempotent — no-op once the store is clean (no pairs above threshold).
+ * Call at startup after attributePersons(). Returns { merged, removed }.
+ */
+export async function deduplicateLore() {
+  const DEDUP_THRESHOLD = 0.85;
+
+  if (!(await loreIndex.isIndexCreated())) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_skip", reason: "no_index" }));
+    return { merged: 0, removed: 0 };
+  }
+
+  const allEntries = load();
+  const targets = allEntries
+    .filter((e) => (e.category === "fact" || e.category === "episodic") && e.embedded)
+    .sort((a, b) => new Date(a.addedAt) - new Date(b.addedAt)); // oldest = canonical
+
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_start", total: targets.length }));
+  if (targets.length < 2) return { merged: 0, removed: 0 };
+
+  // Batch-embed all target texts in one API call
+  const embResponse = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: targets.map((e) => e.text),
+  });
+  const embeddingById = new Map(targets.map((e, i) => [e.id, embResponse.data[i].embedding]));
+
+  const removedIds = new Set();
+  const updates = new Map(); // id -> merged text
+  let merged = 0;
+  let removed = 0;
+
+  for (let i = 1; i < targets.length; i++) {
+    const entry = targets[i];
+    if (removedIds.has(entry.id)) continue;
+
+    // Find similar entries among older (canonical) entries via vector query
+    const embedding = embeddingById.get(entry.id);
+    if (!embedding) continue;
+
+    const results = await loreIndex.queryItems(embedding, 10);
+    const canonicalById = new Map(targets.slice(0, i).filter((e) => !removedIds.has(e.id)).map((e) => [e.id, e]));
+
+    const candidates = results
+      .filter((r) => r.score >= DEDUP_THRESHOLD && r.item.metadata.id !== entry.id && canonicalById.has(r.item.metadata.id))
+      .map((r) => canonicalById.get(r.item.metadata.id));
+
+    if (candidates.length === 0) continue;
+
+    const result = await coalesce(entry.text, candidates);
+    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_coalesce", action: result.action, text: entry.text.slice(0, 60), candidateCount: candidates.length }));
+
+    if (result.action === "skip") {
+      removedIds.add(entry.id);
+      removed++;
+      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_removed", id: entry.id, text: entry.text.slice(0, 60) }));
+    } else if (result.action === "merge" && typeof result.index === "number" && candidates[result.index]) {
+      const target = candidates[result.index];
+      updates.set(target.id, result.merged);
+      removedIds.add(entry.id);
+      merged++;
+      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_merged", keepId: target.id, removeId: entry.id, merged: result.merged.slice(0, 60) }));
+    }
+  }
+
+  if (removedIds.size === 0 && updates.size === 0) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_done", merged: 0, removed: 0 }));
+    return { merged: 0, removed: 0 };
+  }
+
+  // Apply all changes in one write
+  const current = load();
+  const cleaned = current
+    .filter((e) => !removedIds.has(e.id))
+    .map((e) => updates.has(e.id) ? { ...e, text: updates.get(e.id), embedded: false, updatedAt: new Date().toISOString() } : e);
+  save(cleaned);
+
+  // Remove stale vectors for removed entries
+  for (const id of removedIds) {
+    try { await loreIndex.deleteItem(id); } catch { /* ignore */ }
+  }
+
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_done", merged, removed, totalCleaned: merged + removed }));
+  return { merged, removed };
+}
+
+// ---------------------------------------------------------------------------
 // Public: attributePersons — one-time post-deploy enrichment
 // ---------------------------------------------------------------------------
 
