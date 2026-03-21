@@ -1,22 +1,24 @@
 /**
  * merge-lore.js — Merge seed lore into the persistent volume lore store.
  *
- * Called at startup. Reads /app/data-src/lore.json (baked into the image)
- * and appends any entries whose IDs are not already in /app/data/lore.json.
- * Never removes or overwrites existing volume entries.
+ * Called at startup. Reads /app/data-src/lore.enc (baked into the image),
+ * decrypts it, and appends any entries whose IDs are not already in
+ * /app/data/lore.json. Never removes or overwrites existing volume entries.
  */
 
 import fs from "fs";
+import { loadEncryptedJson } from "./crypto-utils.js";
 
-const seedPath = "/app/data-src/lore.json";
+const seedEncPath = "/app/data-src/lore.enc";
+const seedJsonPath = "/app/data-src/lore.json";
 const livePath = "/app/data/lore.json";
 
-if (!fs.existsSync(seedPath)) {
+if (!fs.existsSync(seedEncPath) && !fs.existsSync(seedJsonPath)) {
   console.log("merge-lore: no seed file, skipping");
   process.exit(0);
 }
 
-const seed = JSON.parse(fs.readFileSync(seedPath, "utf8"));
+const seed = loadEncryptedJson(seedEncPath, seedJsonPath);
 
 let live = [];
 if (fs.existsSync(livePath)) {

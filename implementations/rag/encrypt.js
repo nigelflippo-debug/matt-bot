@@ -26,6 +26,7 @@ const dataDir = path.resolve(__dirname, "../../data");
 const FILES = [
   { src: "enriched.json", dest: "enriched.enc" },
   { src: "corpus.json",   dest: "corpus.enc"   },
+  { src: "lore.json",     dest: "lore.enc"     },
 ];
 
 const keyHex = process.env.CONTENT_ENCRYPTION_KEY;

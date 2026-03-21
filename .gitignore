@@ -17,6 +17,7 @@ data/discord-pairs.json
 # Plaintext corpus data — deploy encrypted .enc versions instead
 data/enriched.json
 data/corpus.json
+data/lore.json
 
 # Raw chat exports — personal data, never commit
 chat-data/
