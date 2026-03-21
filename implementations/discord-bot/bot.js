@@ -27,6 +27,11 @@ const FETCH_MESSAGES = 8;
 // How many prior messages to pass to implicit extraction
 const EXTRACTION_MESSAGES = 7;
 
+// Passive observation — extract from non-gweeod channels without being mentioned
+const PASSIVE_BUFFER_SIZE = 5;
+const PASSIVE_MIN_LENGTH = 15;
+const passiveBuffers = new Map(); // channelId -> [{name, text}]
+
 // Recency buffer — tracks recently injected example IDs to prevent repetition
 const RECENCY_BUFFER_SIZE = 20;
 const recentExampleIds = new Set();
@@ -124,15 +129,18 @@ async function runImplicitExtraction(conversationContext, requestId, message) {
     log(requestId, "implicit_extract", { found: facts.length, facts: facts.map((f) => f.text.slice(0, 60)) });
     let anyProvisional = false;
     let anyPromoted = false;
+    let anyReinforced = false;
     let anyTemporal = false;
     for (const fact of facts) {
       const result = await addImplicit(fact.text, "bot-inferred", fact.person);
       log(requestId, "implicit_store", { fact: fact.text.slice(0, 60), person: fact.person, action: result.action });
       if (result.action === "added") anyProvisional = true;
       if (result.action === "promoted") anyPromoted = true;
+      if (result.action === "reinforced") anyReinforced = true;
       if (result.temporal) anyTemporal = true;
     }
     if (anyPromoted) await message.react("🧠").catch(() => {});
+    if (anyReinforced) await message.react("🔄").catch(() => {});
     if (anyProvisional) await message.react("🤔").catch(() => {});
     if (anyTemporal) await message.react("📅").catch(() => {});
   } catch (err) {
@@ -165,6 +173,26 @@ client.on(Events.MessageCreate, async (message) => {
   const inGweeod = message.channel.name === "gweeod";
   const botMentioned = message.mentions.has(client.user);
   const onlyOthersMentioned = message.mentions.users.size > 0 && !botMentioned;
+
+  // Passive observation — accumulate messages in non-gweeod channels for extraction
+  if (!inGweeod) {
+    const passiveText = message.content.replace(/<@!?\d+>/g, "").trim();
+    if (passiveText.length >= PASSIVE_MIN_LENGTH) {
+      const name = message.member?.displayName ?? message.author.username;
+      const buf = passiveBuffers.get(message.channel.id) ?? [];
+      buf.push({ name, text: passiveText });
+      passiveBuffers.set(message.channel.id, buf);
+
+      if (buf.length >= PASSIVE_BUFFER_SIZE) {
+        passiveBuffers.delete(message.channel.id);
+        const extractionContext = buf.map(({ name, text }) => `${name}: ${text}`).join("\n");
+        const passiveRequestId = `p_${message.id.slice(-6)}`;
+        log(passiveRequestId, "passive_extract_trigger", { channel: message.channel.name, messages: buf.length });
+        runImplicitExtraction(extractionContext, passiveRequestId, message).catch(() => {});
+        embedPendingLore().catch(() => {});
+      }
+    }
+  }
 
   // If someone else is tagged (and not the bot), stay out of it
   if (onlyOthersMentioned) return;
@@ -356,14 +384,14 @@ client.on(Events.MessageCreate, async (message) => {
 
     // Retrieve relevant facts + directives + discord examples
     const [retrievedFacts, directives, discordExamples] = await Promise.all([
-      retrieveLore(retrievalQuery, 5),
+      retrieveLore(retrievalQuery, 8),
       Promise.resolve(getDirectives()),
       retrieveDiscord(retrievalQuery, 3),
     ]);
     // Confirmed facts: non-provisional, treat as ground truth
     // Soft facts: provisional with confidence >= 0.5 (user-asserted), inject with weaker framing
     const confirmedFacts = retrievedFacts.filter((f) => f.category !== "provisional");
-    const softFacts = retrievedFacts.filter((f) => f.category === "provisional" && f.confidence >= 0.5);
+    const softFacts = retrievedFacts.filter((f) => f.category === "provisional" && f.confidence >= 0.4);
     log(requestId, "lore_retrieved", { facts: confirmedFacts.length, soft: softFacts.length, provisional_excluded: retrievedFacts.length - confirmedFacts.length - softFacts.length, directives: directives.length, discordExamples: discordExamples.length });
 
     // Extract the last few Matt replies to discourage repetition

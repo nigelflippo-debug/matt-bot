@@ -23,6 +23,10 @@ const loreIndexPath = path.resolve(__dirname, "../../data/index-lore");
 
 const DIRECTIVE_CAP = 20;
 
+// Recent extractions cache — bridges the gap between extraction and embedding
+const RECENT_EXTRACTION_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const recentExtractions = []; // [{text, person, addedAt}]
+
 const openai = new OpenAI();
 const loreIndex = new LocalIndex(loreIndexPath);
 
@@ -126,7 +130,7 @@ export function applyDecay() {
       }
     } catch { /* treat as age 0 */ }
 
-    const newConfidence = Math.max(0.3, 0.6 - (ageInDays / 30) * 0.3);
+    const newConfidence = Math.max(0.3, 0.6 - (ageInDays / 90) * 0.3);
 
     if (newConfidence <= 0.3) {
       pruned++;
@@ -675,7 +679,30 @@ export async function retrieveLore(query, k = 5) {
   const others = scored.filter((e) => !e.person || !queryLower.includes(e.person.toLowerCase()));
   const retrieved = [...personMatches, ...others];
 
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_retrieve", count: retrieved.length, personBoosted: personMatches.length, facts: retrieved.map((e) => ({ text: e.text.slice(0, 60), person: e.person })) }));
+  // Append recent extractions not yet embedded — bridges the extraction-to-embedding gap
+  const now = Date.now();
+  const recentValid = recentExtractions.filter((r) => now - r.addedAt < RECENT_EXTRACTION_TTL_MS);
+  recentExtractions.length = 0;
+  recentExtractions.push(...recentValid);
+  let recentInjected = 0;
+
+  for (const recent of recentValid) {
+    if (recent.person && queryLower.includes(recent.person.toLowerCase())) {
+      const alreadyPresent = retrieved.some((e) => e.text === recent.text);
+      if (!alreadyPresent) {
+        retrieved.push({
+          id: "recent",
+          text: recent.text,
+          person: recent.person,
+          category: "provisional",
+          confidence: 0.6,
+        });
+        recentInjected++;
+      }
+    }
+  }
+
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_retrieve", count: retrieved.length, personBoosted: personMatches.length, recentInjected, facts: retrieved.map((e) => ({ text: e.text.slice(0, 60), person: e.person })) }));
   return retrieved;
 }
 
@@ -892,7 +919,9 @@ const EXTRACT_SYSTEM = `You are a memory assistant for a Discord friend group. G
 Extract broadly — personal facts AND conversational signals:
 - Personal facts: job changes, moves, relationships, health, major events
 - Concrete upcoming plans (trips, meetups, activities with some specificity)
+- Soft plans with any specificity ("might go to Vermont this weekend", "probably switching jobs soon", "thinking about getting a dog")
 - Opinions, preferences, and strong takes on anything — sports, politics, games, food, media, news
+- Strong reactions to current events or media (loved/hated a movie, angry about news, excited about a game release)
 - Recurring interests, hobbies, or things they care about
 - Patterns in who someone is ("always", "never", "hates when", "loves that")
 
@@ -901,7 +930,7 @@ Do NOT extract:
 - Jokes that only work in context
 - Messages directed at the bot — questions, requests, or prompts asking the bot for something ("what should I do", "what do you think", "who would win")
 - Bot commands or meta-conversation about the bot
-- Vague speculation ("might", "probably", "maybe")
+- Truly vacuous speculation with no specificity ("might do something", "probably idk")
 - Questions without clear answers in the conversation
 
 Write facts in third person, concisely. Include the person's name in the fact text.
@@ -909,7 +938,7 @@ Return a JSON object: {"facts": [{"text": "...", "person": "<first name of perso
 Return {"facts": []} if nothing is worth capturing.
 No markdown, JSON only.`;
 
-const PROVISIONAL_EXPIRY_DAYS = 30;
+const PROVISIONAL_EXPIRY_DAYS = 90;
 
 /**
  * Extract memory-worthy content from a conversation snippet.
@@ -966,7 +995,7 @@ export async function addImplicit(text, source = "bot-inferred", person = null) 
     }
   }
 
-  // Check against existing provisionals — promote if matched
+  // Check against existing provisionals — reinforce or promote if matched
   const provisionals = entries.filter((e) => e.category === "provisional");
   if (provisionals.length > 0) {
     const provCandidates = await preFilterCandidates(text, provisionals);
@@ -977,22 +1006,41 @@ export async function addImplicit(text, source = "bot-inferred", person = null) 
       provCandidates[provResult.index]
     ) {
       const target = provCandidates[provResult.index];
-      const promotedText = provResult.action === "merge" ? provResult.merged : target.text;
+      const mergedText = provResult.action === "merge" ? provResult.merged : target.text;
       const actualIndex = entries.findIndex((e) => e.id === target.id);
       if (actualIndex !== -1) {
-        entries[actualIndex] = {
-          ...entries[actualIndex],
-          text: promotedText,
-          category: "fact",
-          confidence: 1.0,
-          lifespan: "permanent",
-          expiresAt: null,
-          embedded: false,
-          updatedAt: new Date().toISOString(),
-        };
-        save(entries);
-        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_promoted", id: target.id, person, text: promotedText.slice(0, 80) }));
-        return { action: "promoted" };
+        if (target.reinforcedAt) {
+          // Third sighting — promote to permanent fact
+          entries[actualIndex] = {
+            ...entries[actualIndex],
+            text: mergedText,
+            category: "fact",
+            confidence: 1.0,
+            lifespan: "permanent",
+            expiresAt: null,
+            embedded: false,
+            updatedAt: new Date().toISOString(),
+          };
+          save(entries);
+          console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_promoted", id: target.id, person, text: mergedText.slice(0, 80) }));
+          return { action: "promoted" };
+        } else {
+          // Second sighting — reinforce, refresh TTL, don't promote yet
+          const now = new Date();
+          entries[actualIndex] = {
+            ...entries[actualIndex],
+            text: mergedText,
+            confidence: 0.6,
+            addedAt: now.toISOString(),
+            reinforcedAt: now.toISOString(),
+            expiresAt: new Date(now.getTime() + PROVISIONAL_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+            embedded: false,
+            updatedAt: now.toISOString(),
+          };
+          save(entries);
+          console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_reinforced", id: target.id, person, text: mergedText.slice(0, 80) }));
+          return { action: "reinforced" };
+        }
       }
     }
   }
@@ -1017,13 +1065,14 @@ export async function addImplicit(text, source = "bot-inferred", person = null) 
     updatedAt: null,
   });
   save(entries);
+  recentExtractions.push({ text, person, addedAt: Date.now() });
   if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category: "provisional", person, source, expiresAt: temporalExpiry, text: text.slice(0, 80) }));
   console.log(JSON.stringify({ ts: now.toISOString(), stage: "implicit_added", person, confidence: temporalExpiry ? 1.0 : 0.6, expiresAt: temporalExpiry ?? defaultExpiry, text: text.slice(0, 80) }));
   return { action: "added", temporal: !!temporalExpiry };
 }
 
 /**
- * Store a user-asserted fact as provisional with low confidence (0.3).
+ * Store a user-asserted fact as provisional with confidence 0.7.
  * Follows the same promotion pipeline as addImplicit — matches existing
  * facts (skip) or provisionals (promote), otherwise stores as provisional.
  * Returns { action: 'known' | 'promoted' | 'added' }
@@ -1031,12 +1080,16 @@ export async function addImplicit(text, source = "bot-inferred", person = null) 
 export async function addUserAsserted(text, addedBy = "unknown") {
   const entries = load();
 
+  // Extract person from the text
+  const parts = await splitOrClassify(text);
+  const person = parts[0]?.person ?? null;
+
   const facts = entries.filter((e) => e.category === "fact");
   if (facts.length > 0) {
     const factCandidates = await preFilterCandidates(text, facts);
     const factResult = await coalesce(text, factCandidates);
     if (factResult.action === "skip" || factResult.action === "merge") {
-      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "user_asserted_skip", reason: "known_fact", addedBy, text: text.slice(0, 80) }));
+      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "user_asserted_skip", reason: "known_fact", addedBy, person, text: text.slice(0, 80) }));
       return { action: "known" };
     }
   }
@@ -1057,6 +1110,7 @@ export async function addUserAsserted(text, addedBy = "unknown") {
         entries[actualIndex] = {
           ...entries[actualIndex],
           text: promotedText,
+          person: person ?? entries[actualIndex].person,
           category: "fact",
           confidence: 1.0,
           lifespan: "permanent",
@@ -1065,7 +1119,7 @@ export async function addUserAsserted(text, addedBy = "unknown") {
           updatedAt: new Date().toISOString(),
         };
         save(entries);
-        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "user_asserted_promoted", id: target.id, addedBy, text: promotedText.slice(0, 80) }));
+        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "user_asserted_promoted", id: target.id, addedBy, person, text: promotedText.slice(0, 80) }));
         return { action: "promoted" };
       }
     }
@@ -1077,9 +1131,9 @@ export async function addUserAsserted(text, addedBy = "unknown") {
   entries.push({
     id: makeId(),
     text,
-    person: null,
+    person,
     category: "provisional",
-    confidence: temporalExpiry ? 1.0 : 0.5,
+    confidence: temporalExpiry ? 1.0 : 0.7,
     source: "user-asserted",
     lifespan: temporalExpiry ? "temporary" : "long-lived",
     expiresAt: temporalExpiry ?? defaultExpiry,
@@ -1090,7 +1144,7 @@ export async function addUserAsserted(text, addedBy = "unknown") {
     updatedAt: null,
   });
   save(entries);
-  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category: "provisional", person: null, source: "user-asserted", expiresAt: temporalExpiry, text: text.slice(0, 80) }));
-  console.log(JSON.stringify({ ts: now.toISOString(), stage: "user_asserted_added", addedBy, confidence: temporalExpiry ? 1.0 : 0.3, expiresAt: temporalExpiry ?? defaultExpiry, text: text.slice(0, 80) }));
+  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category: "provisional", person, source: "user-asserted", expiresAt: temporalExpiry, text: text.slice(0, 80) }));
+  console.log(JSON.stringify({ ts: now.toISOString(), stage: "user_asserted_added", addedBy, person, confidence: temporalExpiry ? 1.0 : 0.7, expiresAt: temporalExpiry ?? defaultExpiry, text: text.slice(0, 80) }));
   return { action: "added", temporal: !!temporalExpiry };
 }
