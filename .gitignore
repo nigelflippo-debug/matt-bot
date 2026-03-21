@@ -20,13 +20,18 @@ data/corpus.json
 data/lore.json
 implementations/simple/system-prompt.md
 
-# Stale persona prompt (contains personal data)
+# Persona plans and drafts (contain personal data)
 implementations/persona/system-prompt.md
+implementations/persona/plan.md
 
-# One-time data mining artifacts (contain personal data)
+# One-time data mining scripts and artifacts (contain personal data)
 implementations/simple/lore-candidates.txt
 implementations/simple/lore-extracted.md
 implementations/simple/politics-extracted.md
+implementations/simple/extract-lore.js
+implementations/simple/import-lore.js
+implementations/simple/mine-lore.js
+implementations/simple/mine-politics.js
 
 # Session files — internal working notes
 sessions/
