@@ -1,44 +1,107 @@
 # matt-bot
 
+Discord bot that responds as Matt Guiod, using RAG retrieval over his real WhatsApp messages + a persistent lore/memory system.
+
 ## Project Structure
 
 ```
 matt-bot/
-├── CLAUDE.md        # This file — project instructions for Claude
-├── docs/            # Plans, SOPs, and project documentation
-│   ├── plans/       # Feature design documents
-│   ├── sops/        # Standard Operating Procedures
-│   └── PROJECT.md   # Project overview and architecture
-├── src/             # All source code
-│   ├── discord-bot/ # Discord event handling, commands
-│   ├── rag/         # Retrieval, generation, lore, encryption
-│   ├── simple/      # Test harness (simple pipeline)
-│   └── whatsapp-processor/ # Corpus parser (one-time build tool)
-├── data/            # Encrypted data files (.enc) and vector indexes
-└── sessions/        # Session resumption files (gitignored)
+├── src/
+│   ├── discord-bot/     # Bot runtime — event handling, commands, context assembly
+│   │   └── bot.js       # Main entry point
+│   ├── rag/             # Core pipeline
+│   │   ├── retrieve.js  # Query enrichment, dual-index vector search, keyword search, reranking
+│   │   ├── generate.js  # System prompt builder + OpenAI generation
+│   │   ├── lore-store.js    # Persistent memory — facts, directives, implicit extraction, decay
+│   │   ├── discord-log.js   # Logs real Matt messages from Discord for ongoing learning
+│   │   ├── crypto-utils.js  # AES-256-GCM encryption/decryption
+│   │   ├── encrypt.js       # CLI: encrypt plaintext files before deployment
+│   │   ├── enrich.js        # One-time: generate semantic descriptions for corpus
+│   │   ├── index.js         # One-time: build Vectra vector indexes
+│   │   ├── merge-lore.js    # Startup: seed lore from image into persistent volume
+│   │   └── pipeline.js      # One-time: full enrich + index pipeline
+│   ├── simple/          # Test harness + encrypted system prompt
+│   └── whatsapp-processor/  # One-time corpus parser (TypeScript)
+├── data/                # Encrypted .enc files only (plaintext gitignored)
+├── docs/
+│   ├── plans/           # Feature design documents
+│   ├── sops/            # Standard Operating Procedures (for Claude)
+│   └── PROJECT.md       # Original project spec and architecture decisions
+├── sessions/            # Session resumption files (gitignored, local only)
+├── Dockerfile
+└── railway.toml
 ```
 
-## Key References
+## How It Runs
 
-### Project overview
+```
+@MattBot message in Discord
+  → bot.js fetches recent channel messages for context
+  → retrieve.js: enrich query (gpt-4o-mini) → embed → dual vector search → keyword search → rerank
+  → lore-store.js: retrieve relevant facts, directives, soft observations
+  → discord-log.js: retrieve recent real Matt messages from this server
+  → generate.js: assemble system prompt (persona + examples + lore + context) → generate (gpt-4o)
+  → bot.js posts reply
 
-@docs/PROJECT.md
+Implicit memory:
+  → bot.js extracts facts from conversation via lore-store.js extractImplicit()
+  → New facts start as "provisional" (confidence 0.3, 90-day TTL)
+  → Second sighting → reinforced (confidence 0.6, TTL refreshed)
+  → Third sighting → promoted to permanent fact (confidence 1.0)
+  → Passive observation: bot extracts from non-gweeod channels every 5 messages
+```
 
-### Feature plans
+## Key Environment Variables
 
-@docs/plans/rag.md
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `DISCORD_TOKEN` | Yes | Discord bot token |
+| `OPENAI_API_KEY` | Yes | OpenAI API (embeddings + generation) |
+| `CONTENT_ENCRYPTION_KEY` | Yes (prod) | 64-char hex key for AES-256-GCM decryption |
+| `OPENAI_MODEL` | No | Override generation model (default: `gpt-4o`) |
 
-@docs/plans/whatsapp-processor.md
+## Encryption
 
-@docs/plans/privacy-store.md
+All sensitive content is encrypted at rest. **Never commit plaintext data files.**
+
+- `data/corpus.enc`, `data/enriched.enc`, `data/lore.enc` — encrypted JSON data
+- `src/simple/system-prompt.enc` — encrypted persona prompt
+- Plaintext equivalents are gitignored and exist only locally
+- `loadEncryptedJson()` / `loadEncryptedText()` in `crypto-utils.js` handle decryption with fallback to plaintext for local dev (no key needed locally)
+- Run `cd src/rag && npm run encrypt` after any changes to plaintext source files
+
+## Deployment
+
+- Hosted on Railway, auto-deploys from `main` branch
+- Dockerfile copies `src/` and `data/*.enc` into image
+- Startup: seeds enc files to persistent volume → merges lore → builds indexes if missing → starts bot
+- Persistent volume at `/app/data/` holds vector indexes, lore.json, discord-pairs.json
+
+## Development
+
+```bash
+# Test locally (needs .env with OPENAI_API_KEY, plaintext data files in data/)
+cd src/rag && node test.js          # RAG pipeline test CLI
+cd src/simple && node test.js       # Simple pipeline test CLI
+cd src/rag && node test.js --debug  # Shows enriched query + retrieved examples
+```
+
+## Bot Commands
+
+| Command | Description |
+|---------|-------------|
+| `!remember <fact>` | Store a fact about someone |
+| `!forget <id>` | Remove a stored fact |
+| `!lore` | List all stored facts and directives |
+| `!directive <rule>` | Add a behavioral rule the bot must follow |
 
 ## Sessions
 
-Session files live at `sessions/YYYY-MM-DD-<slug>.md` and capture enough context to resume work without re-reading the whole codebase. At the start of a new session, read the most recent relevant session file.
+Session files live locally at `sessions/YYYY-MM-DD-<slug>.md` (gitignored). They capture enough context to resume work across conversations. Read the most recent relevant session file at the start of a new session.
 
-## Notes
+## Conventions
 
+- Sensitive content is always encrypted before commit — never commit plaintext corpus, lore, or system prompt
 - Source code goes in `src/` with a subdirectory per component
 - Feature plans go in `docs/plans/`
-- SOPs go in `docs/sops/`
-- Sensitive content (corpus, system prompt, lore) is encrypted — never commit plaintext
+- The system prompt lives encrypted at `src/simple/system-prompt.enc` — edit the plaintext locally, then run encrypt
