@@ -11,9 +11,17 @@ const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 /**
  * Format retrieved examples into a block to inject into the system prompt.
+ * Includes inputContext (what Matt was replying to) when available so the
+ * model can judge how the example maps to the current situation.
  */
 function formatExamples(results) {
-  return results.map(({ response }) => response).join("\n");
+  return results.map(({ inputContext, response }) => {
+    if (inputContext) {
+      const contextLines = inputContext.split("\n").map((l) => `> ${l}`).join("\n");
+      return `${contextLines}\n${response}`;
+    }
+    return response;
+  }).join("\n\n");
 }
 
 /**
@@ -95,7 +103,13 @@ ${exampleBlock}
 
   // Discord examples: recent real Matt messages from this Discord server.
   if (discordExamples.length > 0) {
-    const discordBlock = discordExamples.map(({ response }) => response).join("\n");
+    const discordBlock = discordExamples.map(({ inputContext, response }) => {
+      if (inputContext) {
+        const contextLines = inputContext.split("\n").map((l) => `> ${l}`).join("\n");
+        return `${contextLines}\n${response}`;
+      }
+      return response;
+    }).join("\n\n");
     injection += `## What Matt has said in this Discord recently
 
 These are real Matt messages from this exact server. Very high signal — weight these heavily.
@@ -144,7 +158,7 @@ export async function generate(systemPrompt, history, userMessage, imageUrls = [
 
   const response = await client.chat.completions.create({
     model: MODEL,
-    max_tokens: 150,
+    max_tokens: 300,
     temperature: 0.8,
     messages: [
       { role: "system", content: systemPrompt },

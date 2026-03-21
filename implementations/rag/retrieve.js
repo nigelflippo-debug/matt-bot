@@ -169,7 +169,11 @@ function inferQueryType(message) {
   return null;
 }
 
-function rerank(candidates, keywordScores, queryType, queryLength) {
+function detectHumor(message) {
+  return /\b(lol|lmao|lmfao|haha|rofl|😂|🤣|💀)\b|!{2,}|\b(bruh|dead)\b/i.test(message);
+}
+
+function rerank(candidates, keywordScores, queryType, queryLength, queryHumor) {
   const now = Date.now();
   const twoYearsMs = 2 * 365 * 24 * 60 * 60 * 1000;
 
@@ -182,11 +186,17 @@ function rerank(candidates, keywordScores, queryType, queryLength) {
       score += kwScore * 0.2;
 
       // response type match
-      if (queryType && c.metadata.responseType === queryType) score += 0.05;
+      if (queryType && c.metadata.responseType === queryType) score += 0.08;
+
+      // humor/tone alignment
+      if (queryHumor) {
+        if (c.metadata.hasHumor) score += 0.04;
+        else score -= 0.02;
+      }
 
       // recency
       const age = now - new Date(c.metadata.timestamp).getTime();
-      if (age < twoYearsMs) score += 0.02;
+      if (age < twoYearsMs) score += 0.04;
 
       // length alignment
       if (queryLength > 60 && c.metadata.lengthBucket === "short") score -= 0.01;
@@ -283,18 +293,15 @@ export function loreSearch(query, topK = 3, windowSize = 4) {
  * @returns {Array} top K enriched records
  */
 export async function retrieve(message, k = 10, conversationContext = "", excludeIds = new Set()) {
-  // Run enrichment, keyword search, and embedding in parallel
-  const [enrichedQuery, keywordResults, embResponse] = await Promise.all([
+  // Run enrichment and keyword search in parallel
+  const [enrichedQuery, keywordResults] = await Promise.all([
     enrichQuery(message, conversationContext),
     Promise.resolve(keywordSearch(message)),
-    // Embed the raw message as a fast path while enrichment runs —
-    // replaced below once we have the enriched query
-    client.embeddings.create({ model: "text-embedding-3-small", input: [message] }),
   ]);
 
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "keyword_search", hits: keywordResults.length }));
 
-  // Re-embed using the enriched query (higher quality than raw message)
+  // Embed the enriched query for vector search
   const enrichedEmbResponse = await client.embeddings.create({
     model: "text-embedding-3-small",
     input: [enrichedQuery],
@@ -337,7 +344,8 @@ export async function retrieve(message, k = 10, conversationContext = "", exclud
 
   // Rerank
   const queryType = inferQueryType(message);
-  const reranked = rerank(merged, keywordScores, queryType, message.length);
+  const queryHumor = detectHumor(message);
+  const reranked = rerank(merged, keywordScores, queryType, message.length, queryHumor);
 
   // Filter out recently used examples — expand pool first to compensate
   const deduplicated = excludeIds.size > 0
