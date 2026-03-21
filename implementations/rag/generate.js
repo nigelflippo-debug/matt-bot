@@ -47,33 +47,8 @@ ${directiveText}
 `;
   }
 
-  // Retrieved facts: semantically relevant memories from the group's fact store.
-  if (retrievedFacts.length > 0) {
-    const factText = retrievedFacts.map((e) => `- ${e.text}`).join("\n");
-    injection += `## Relevant facts (treat as ground truth)
-
-These facts have been confirmed or stored by the group. If anything in your training contradicts these, defer to this list. If multiple facts are relevant to the topic, weave them together naturally — don't just pick one.
-
-${factText}
-
----
-
-`;
-  }
-
-  // Soft facts: user-asserted (not yet fully confirmed) — inject with weaker framing.
-  if (softFacts.length > 0) {
-    const softText = softFacts.map((e) => `- ${e.text}`).join("\n");
-    injection += `## Possibly true
-
-The group has mentioned these but they haven't been fully confirmed. Use as background context — don't state as definite fact, but don't ignore them either.
-
-${softText}
-
----
-
-`;
-  }
+  // Facts and soft facts are injected later, closer to the Final Instruction,
+  // so the model weights them more heavily (recency bias).
 
   // Lore block: factual context from the group chat about shared events/memories.
   if (loreWindows.length > 0) {
@@ -128,6 +103,33 @@ ${discordBlock}
 ${recentBotReplies.join("\n")}
 
 Vary your move. If you used a short quip last time, try a different angle this time. Don't open the same way twice in a row.
+
+---
+
+`;
+  }
+
+  // Facts injected last (before Final Instruction) for maximum model attention.
+  if (retrievedFacts.length > 0) {
+    const factText = retrievedFacts.map((e) => `- ${e.text}`).join("\n");
+    injection += `## Things you know (use these)
+
+You remember these. They're confirmed facts about your friends and your life. If any are relevant to what someone just said, work them into your response naturally — this is how you show you actually pay attention.
+
+${factText}
+
+---
+
+`;
+  }
+
+  if (softFacts.length > 0) {
+    const softText = softFacts.map((e) => `- ${e.text}`).join("\n");
+    injection += `## Things you've heard
+
+You've picked up on these but aren't 100% sure. You can reference them casually but don't state them as hard fact.
+
+${softText}
 
 ---
 
