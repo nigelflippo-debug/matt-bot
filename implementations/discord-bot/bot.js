@@ -24,6 +24,8 @@ const baseSystemPrompt = fs.readFileSync(
 
 // How many recent messages to fetch total
 const FETCH_MESSAGES = 8;
+// How many prior messages to pass to implicit extraction
+const EXTRACTION_MESSAGES = 7;
 
 // Recency buffer — tracks recently injected example IDs to prevent repetition
 const RECENCY_BUFFER_SIZE = 20;
@@ -393,14 +395,15 @@ client.on(Events.MessageCreate, async (message) => {
     embedPendingLore().catch(() => {});
     embedPendingDiscord().catch(() => {});
 
-    // Implicit extraction — skip short pure questions (ends with ?, under 60 chars) since they contain no facts
+    // Implicit extraction — in gweeod the bot responds to everything so always extract from context.
+    // Outside gweeod, skip short pure questions since they contain no facts.
     const isPureQuestion = userMessage.endsWith("?") && userMessage.length < 60;
-    if (userMessage.length >= 10 && !isPureQuestion) {
-      const extractionContext = [
-        ...priorMessages.slice(-3).filter(({ botDirected }) => !botDirected).map(({ name, text }) => `${name}: ${text}`),
-        `${senderName}: ${userMessage}`,
-      ].join("\n");
-      runImplicitExtraction(extractionContext, requestId, message).catch(() => {});
+    const shouldExtract = inGweeod || (userMessage.length >= 10 && !isPureQuestion);
+    if (shouldExtract) {
+      const priorContext = priorMessages.slice(-EXTRACTION_MESSAGES).filter(({ botDirected }) => !botDirected).map(({ name, text }) => `${name}: ${text}`);
+      const triggerLine = (!isPureQuestion && userMessage.length >= 10) ? [`${senderName}: ${userMessage}`] : [];
+      const extractionContext = [...priorContext, ...triggerLine].join("\n");
+      if (extractionContext.trim()) runImplicitExtraction(extractionContext, requestId, message).catch(() => {});
     }
 
     if (debugMode) {
