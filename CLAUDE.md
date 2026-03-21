@@ -99,6 +99,10 @@ cd src/rag && node test.js --debug  # Shows enriched query + retrieved examples
 
 Session files live locally at `sessions/YYYY-MM-DD-<slug>.md` (gitignored). They capture enough context to resume work across conversations. Read the most recent relevant session file at the start of a new session.
 
+## Patch Notes
+
+At the end of a working session (or at a natural checkpoint), write patch notes to `docs/patch-notes-YYYY-MM-DD.md`. These are user-facing changelogs — written for the friend group, not for developers. They should cover what changed and why, grouped by area (memory, retrieval, persona, infrastructure, etc.). See existing patch notes in `docs/` for the format.
+
 ## Conventions
 
 - Sensitive content is always encrypted before commit — never commit plaintext corpus, lore, or system prompt
