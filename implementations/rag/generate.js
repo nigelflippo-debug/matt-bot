@@ -22,13 +22,15 @@ function formatExamples(results) {
  * Inserts before "## Final Instruction" so the static examples and retrieved
  * examples are both present.
  */
-export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], retrievedFacts = [], directives = [], discordExamples = []) {
+export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], retrievedFacts = [], directives = [], discordExamples = [], softFacts = []) {
   let injection = "";
 
   // Directives: behavioral rules the group has set — always inject.
   if (directives.length > 0) {
     const directiveText = directives.map((e) => `- ${e.text}`).join("\n");
-    injection += `## Rules (follow these exactly)
+    injection += `## Rules (hard constraints — check these before every response)
+
+These override your defaults. Before generating, verify your response does not violate any of these:
 
 ${directiveText}
 
@@ -42,9 +44,23 @@ ${directiveText}
     const factText = retrievedFacts.map((e) => `- ${e.text}`).join("\n");
     injection += `## Relevant facts (treat as ground truth)
 
-These facts have been confirmed or stored by the group. If anything in your training contradicts these, defer to this list.
+These facts have been confirmed or stored by the group. If anything in your training contradicts these, defer to this list. If multiple facts are relevant to the topic, weave them together naturally — don't just pick one.
 
 ${factText}
+
+---
+
+`;
+  }
+
+  // Soft facts: user-asserted (not yet fully confirmed) — inject with weaker framing.
+  if (softFacts.length > 0) {
+    const softText = softFacts.map((e) => `- ${e.text}`).join("\n");
+    injection += `## Possibly true
+
+The group has mentioned these but they haven't been fully confirmed. Use as background context — don't state as definite fact, but don't ignore them either.
+
+${softText}
 
 ---
 

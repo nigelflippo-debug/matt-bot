@@ -1079,7 +1079,7 @@ export async function addUserAsserted(text, addedBy = "unknown") {
     text,
     person: null,
     category: "provisional",
-    confidence: temporalExpiry ? 1.0 : 0.3,
+    confidence: temporalExpiry ? 1.0 : 0.5,
     source: "user-asserted",
     lifespan: temporalExpiry ? "temporary" : "long-lived",
     expiresAt: temporalExpiry ?? defaultExpiry,
