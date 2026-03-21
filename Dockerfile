@@ -3,15 +3,15 @@ FROM node:20-slim
 WORKDIR /app
 
 # Install rag dependencies (retrieve.js + generate.js live here)
-COPY implementations/rag/package.json implementations/rag/package-lock.json* ./implementations/rag/
-RUN cd implementations/rag && npm ci --omit=dev
+COPY src/rag/package.json src/rag/package-lock.json* ./src/rag/
+RUN cd src/rag && npm ci --omit=dev
 
 # Install discord-bot dependencies
-COPY implementations/discord-bot/package.json implementations/discord-bot/package-lock.json* ./implementations/discord-bot/
-RUN cd implementations/discord-bot && npm ci --omit=dev
+COPY src/discord-bot/package.json src/discord-bot/package-lock.json* ./src/discord-bot/
+RUN cd src/discord-bot && npm ci --omit=dev
 
 # Copy source
-COPY implementations/ ./implementations/
+COPY src/ ./src/
 
 # Stage data files outside the volume mount path so the volume doesn't hide them.
 # At startup we copy them into /app/data/ if not already present.
@@ -22,10 +22,10 @@ CMD ["sh", "-c", "\
   cp -n /app/data-src/corpus.enc /app/data/corpus.enc && \
   cp -n /app/data-src/enriched.enc /app/data/enriched.enc && \
   cp -n /app/data-src/lore.enc /app/data/lore.enc && \
-  node /app/implementations/rag/merge-lore.js && \
+  node /app/src/rag/merge-lore.js && \
   if [ ! -d /app/data/index-pair ] || [ ! -d /app/data/index-window ]; then \
     echo 'Indexes not found — building (this takes a few minutes)...' && \
-    cd /app && node --max-old-space-size=4096 implementations/rag/index.js && \
+    cd /app && node --max-old-space-size=4096 src/rag/index.js && \
     echo 'Indexes built.'; \
   fi && \
-  node implementations/discord-bot/bot.js"]
+  node src/discord-bot/bot.js"]

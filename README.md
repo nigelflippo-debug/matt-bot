@@ -41,15 +41,15 @@ Generation (gpt-4o) ──> Discord reply
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| Discord bot | `implementations/discord-bot/bot.js` | Event handling, command processing, context assembly |
-| Retrieval | `implementations/rag/retrieve.js` | Query enrichment, dual-index search, keyword search, reranking |
-| Generation | `implementations/rag/generate.js` | System prompt builder, OpenAI generation |
-| Lore store | `implementations/rag/lore-store.js` | Persistent memory — facts, directives, implicit extraction, decay |
-| Discord log | `implementations/rag/discord-log.js` | Logs real Matt messages from Discord for ongoing learning |
-| Encryption | `implementations/rag/crypto-utils.js` | AES-256-GCM encryption for sensitive content files |
-| WhatsApp processor | `implementations/whatsapp-processor/processor.ts` | Parses WhatsApp exports into structured corpus |
-| Enrichment | `implementations/rag/enrich.js` | One-time: generates semantic descriptions for all corpus entries |
-| Indexing | `implementations/rag/index.js` | One-time: builds Vectra vector indexes from enriched data |
+| Discord bot | `src/discord-bot/bot.js` | Event handling, command processing, context assembly |
+| Retrieval | `src/rag/retrieve.js` | Query enrichment, dual-index search, keyword search, reranking |
+| Generation | `src/rag/generate.js` | System prompt builder, OpenAI generation |
+| Lore store | `src/rag/lore-store.js` | Persistent memory — facts, directives, implicit extraction, decay |
+| Discord log | `src/rag/discord-log.js` | Logs real Matt messages from Discord for ongoing learning |
+| Encryption | `src/rag/crypto-utils.js` | AES-256-GCM encryption for sensitive content files |
+| WhatsApp processor | `src/whatsapp-processor/processor.ts` | Parses WhatsApp exports into structured corpus |
+| Enrichment | `src/rag/enrich.js` | One-time: generates semantic descriptions for all corpus entries |
+| Indexing | `src/rag/index.js` | One-time: builds Vectra vector indexes from enriched data |
 
 ## Setup
 
@@ -79,10 +79,10 @@ The corpus and persona data are encrypted at rest. Plaintext source files are ne
 
 ```bash
 # 1. Parse WhatsApp exports into corpus.json
-cd implementations/whatsapp-processor && npx ts-node processor.ts
+cd src/whatsapp-processor && npx ts-node processor.ts
 
 # 2. Enrich corpus with semantic descriptions (~$0.15 via gpt-4o-mini)
-cd implementations/rag && npm run enrich
+cd src/rag && npm run enrich
 
 # 3. Build vector indexes (~$0.003 via text-embedding-3-small)
 npm run index
