@@ -128,7 +128,7 @@ export async function generate(systemPrompt, history, userMessage, imageUrls = [
 
   const response = await client.chat.completions.create({
     model: MODEL,
-    max_tokens: 300,
+    max_tokens: 150,
     temperature: 0.8,
     messages: [
       { role: "system", content: systemPrompt },

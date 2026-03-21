@@ -350,14 +350,15 @@ client.on(Events.MessageCreate, async (message) => {
       ms: t2 - t1,
     });
 
-    // Embed any pending lore + discord entries, then retrieve relevant facts + directives + discord examples
-    await Promise.all([embedPendingLore(), embedPendingDiscord()]);
+    // Retrieve relevant facts + directives + discord examples
     const [retrievedFacts, directives, discordExamples] = await Promise.all([
       retrieveLore(retrievalQuery, 5),
       Promise.resolve(getDirectives()),
       retrieveDiscord(retrievalQuery, 3),
     ]);
-    log(requestId, "lore_retrieved", { facts: retrievedFacts.length, directives: directives.length, discordExamples: discordExamples.length });
+    // Exclude provisionals from ground truth injection — they're unconfirmed and shouldn't be cited as facts
+    const confirmedFacts = retrievedFacts.filter((f) => f.category !== "provisional");
+    log(requestId, "lore_retrieved", { facts: confirmedFacts.length, provisional_excluded: retrievedFacts.length - confirmedFacts.length, directives: directives.length, discordExamples: discordExamples.length });
 
     // Extract the last few Matt replies to discourage repetition
     const recentBotReplies = history
@@ -365,7 +366,7 @@ client.on(Events.MessageCreate, async (message) => {
       .slice(-3)
       .map((m) => m.content);
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, retrievedFacts, directives, discordExamples);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, confirmedFacts, directives, discordExamples);
 
     log(requestId, "generating");
     const t3 = Date.now();
@@ -383,8 +384,14 @@ client.on(Events.MessageCreate, async (message) => {
     await message.reply(reply);
     log(requestId, "replied");
 
-    // Fire implicit extraction in background — doesn't block the reply
-    if (userMessage.length >= 30) {
+    // Background work — none of this blocks the reply
+    // Embed any pending lore + discord entries (moved out of main path)
+    embedPendingLore().catch(() => {});
+    embedPendingDiscord().catch(() => {});
+
+    // Implicit extraction — skip short pure questions (ends with ?, under 60 chars) since they contain no facts
+    const isPureQuestion = userMessage.endsWith("?") && userMessage.length < 60;
+    if (userMessage.length >= 30 && !isPureQuestion) {
       const extractionContext = [
         ...priorMessages.slice(-3).filter(({ botDirected }) => !botDirected).map(({ name, text }) => `${name}: ${text}`),
         `${senderName}: ${userMessage}`,
