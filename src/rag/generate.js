@@ -30,7 +30,7 @@ function formatExamples(results) {
  * Inserts before "## Final Instruction" so the static examples and retrieved
  * examples are both present.
  */
-export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], retrievedMemories = [], directives = [], discordExamples = [], personProfile = null) {
+export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], retrievedMemories = [], directives = [], discordExamples = [], personProfile = null, aggression = null) {
   let injection = "";
 
   // Directives: behavioral rules the group has set — always inject.
@@ -154,6 +154,17 @@ ${bgText}
 `;
   }
 
+  // Aggression block — injected last for maximum model attention
+  if (aggression) {
+    injection += `## AGGRESSION ACTIVE
+
+You are fired up about ${aggression.topic}. This is a topic that genuinely pisses you off. Respond with clear frustration, anger, and indignation. You're not performing anger — you're actually heated. Be aggressive, confrontational, and unapologetic. Rant if you need to. Don't hold back, don't hedge, don't be diplomatic. Stay in character as Matt — this is how Matt sounds when he's pissed off. No fake politeness, no "I see your point." You're mad and you're letting them know it.
+
+---
+
+`;
+  }
+
   return basePrompt.replace("## Final Instruction", `${injection}## Final Instruction`);
 }
 
@@ -165,7 +176,7 @@ ${bgText}
  * @param {string}   userMessage  - the incoming message to respond to
  * @param {string[]} imageUrls    - optional image attachment URLs
  */
-export async function generate(systemPrompt, history, userMessage, imageUrls = []) {
+export async function generate(systemPrompt, history, userMessage, imageUrls = [], overrides = {}) {
   let userContent;
   if (imageUrls.length > 0) {
     userContent = [
@@ -178,8 +189,8 @@ export async function generate(systemPrompt, history, userMessage, imageUrls = [
 
   const response = await client.chat.completions.create({
     model: MODEL,
-    max_tokens: 300,
-    temperature: 0.8,
+    max_tokens: overrides.max_tokens ?? 300,
+    temperature: overrides.temperature ?? 0.8,
     frequency_penalty: 0.3,
     messages: [
       { role: "system", content: systemPrompt },
