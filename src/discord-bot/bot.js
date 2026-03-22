@@ -16,6 +16,7 @@ import { addLore, removeLore, getAllLore, embedPendingLore, retrieveLore, getDir
 import { logMattMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 import { loadEncryptedText } from "../rag/crypto-utils.js";
 import { readUrl } from "../rag/url-reader.js";
+import { classifyAggression } from "../rag/aggression.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -95,6 +96,30 @@ const REMEMBER_BACKOFF = [
   "ok enough, I need a minute",
   "relax, I'll remember stuff",
 ];
+
+// Aggression state — per-channel tracking of provocation-triggered aggressive mode
+const aggressionState = new Map(); // channelId → {topic, remainingReplies}
+
+function getAggression(channelId) {
+  const state = aggressionState.get(channelId);
+  if (!state || state.remainingReplies <= 0) {
+    aggressionState.delete(channelId);
+    return null;
+  }
+  return state;
+}
+
+function triggerAggression(channelId, topic) {
+  const replies = Math.random() < 0.5 ? 2 : 3;
+  aggressionState.set(channelId, { topic, remainingReplies: replies });
+}
+
+function decrementAggression(channelId) {
+  const state = aggressionState.get(channelId);
+  if (!state) return;
+  state.remainingReplies--;
+  if (state.remainingReplies <= 0) aggressionState.delete(channelId);
+}
 
 // Spam timeout — track message timestamps for the designated user
 const SPAM_USER_ID = process.env.SPAM_USER_ID ?? "";
@@ -582,12 +607,20 @@ client.on(Events.MessageCreate, async (message) => {
     const retrievalQuery = userMessage || conversationContext || "reacting to an image";
 
     const t1 = Date.now();
-    const [results, loreWindows] = await Promise.all([
+    const [results, loreWindows, aggressionClassification] = await Promise.all([
       retrieve(retrievalQuery, 5, conversationContext, recentExampleIds),
       loreSearch(retrievalQuery, 3),
+      classifyAggression(userMessage, conversationContext),
     ]);
     trackExamples(results.map((r) => r.id));
     const t2 = Date.now();
+
+    // Update aggression state based on classification
+    if (aggressionClassification.triggered) {
+      triggerAggression(message.channel.id, aggressionClassification.topic);
+      log(requestId, "aggression_triggered", { topic: aggressionClassification.topic });
+    }
+    const aggression = getAggression(message.channel.id);
 
     log(requestId, "retrieval_complete", {
       ragResults: results.length,
@@ -610,12 +643,13 @@ client.on(Events.MessageCreate, async (message) => {
       .slice(-3)
       .map((m) => m.content);
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, retrievedMemories, directives, discordExamples, personProfile);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, retrievedMemories, directives, discordExamples, personProfile, aggression);
 
-    log(requestId, "generating");
+    log(requestId, "generating", { aggressive: !!aggression });
     const t3 = Date.now();
     const userContent = userMessage ? `${senderName}: ${userMessage}` : `${senderName} sent an image.`;
-    const reply = await generate(systemPrompt, history, userContent, imageUrls);
+    const genOverrides = aggression ? { max_tokens: 500, temperature: 0.95 } : {};
+    const reply = await generate(systemPrompt, history, userContent, imageUrls, genOverrides);
     const t4 = Date.now();
 
     log(requestId, "generated", {
@@ -627,6 +661,9 @@ client.on(Events.MessageCreate, async (message) => {
     clearInterval(typingInterval);
     await message.reply(reply);
     log(requestId, "replied");
+
+    // Decrement aggression counter after each bot reply
+    if (aggression) decrementAggression(message.channel.id);
 
     // Background work — none of this blocks the reply
     // Embed any pending lore + discord entries (moved out of main path)
