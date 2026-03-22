@@ -60,6 +60,42 @@ const ADMIN_IDS = new Set(
 );
 function isAdmin(userId) { return ADMIN_IDS.has(userId); }
 
+// Remember command rate limiting — max 3 uses per user per 5 minutes
+const REMEMBER_WINDOW_MS = 5 * 60 * 1000;
+const REMEMBER_LIMIT = 3;
+const rememberTimestamps = new Map(); // userId -> timestamp[]
+
+function checkRememberRateLimit(userId) {
+  const now = Date.now();
+  const timestamps = (rememberTimestamps.get(userId) ?? []).filter((t) => now - t < REMEMBER_WINDOW_MS);
+  if (timestamps.length >= REMEMBER_LIMIT) return false;
+  timestamps.push(now);
+  rememberTimestamps.set(userId, timestamps);
+  return true;
+}
+
+const REMEMBER_ACKS = {
+  added:   ["got it", "noted", "yeah ok", "ok", "yep", "alright", "done", "locked in"],
+  merged:  ["yeah I kind of already knew that", "I already had something like that, updated", "already had that one more or less", "merged with what I already had"],
+  skipped: ["I already know that", "yeah I know", "already got that one", "I know I know"],
+  split:   ["ok I split that — part goes in memory, part is a rule", "treated part of that as a rule and part as memory"],
+};
+
+const REMEMBER_NOW_ACKS = {
+  added:   ["got it, won't hold onto that forever", "ok, just for now", "noted, I'll forget it eventually", "yeah ok, temporarily"],
+  merged:  ["already had something like that, updated the timing", "I know, updated"],
+  skipped: ["already got that", "yeah I know"],
+};
+
+const REMEMBER_BACKOFF = [
+  "ok I get it, stop telling me things",
+  "my brain is full, come back later",
+  "you're going to break me",
+  "dude I can't take in any more right now",
+  "ok enough, I need a minute",
+  "relax, I'll remember stuff",
+];
+
 // Spam timeout — track message timestamps for the designated user
 const SPAM_USER_ID = process.env.SPAM_USER_ID ?? "";
 const SPAM_WINDOW_MS = 20_000;   // 20 second window
@@ -308,33 +344,27 @@ client.on(Events.MessageCreate, async (message) => {
     const isTrusted = isAdmin(message.author.id) || message.author.id === SPAM_USER_ID;
     const fact = rememberMatch[1].trim();
 
+    if (!isTrusted && !checkRememberRateLimit(message.author.id)) {
+      const line = REMEMBER_BACKOFF[Math.floor(Math.random() * REMEMBER_BACKOFF.length)];
+      await message.reply(line);
+      return;
+    }
+
     if (rememberIsEpisodic) {
       // "remember for now:" — memory with temporal expiry
       const result = await addLore(`for now: ${fact}`, senderName);
       log(requestId, "memory_write", { fact, addedBy: senderName, action: result.action, path: "temporary" });
-      const acks = {
-        added:   `Got it. I'll remember that for now.`,
-        merged:  `Yeah I already kind of knew that, updated.`,
-        skipped: `I already know that.`,
-        split:   `Got it. I split that into a memory and a rule.`,
-      };
-      await message.reply(acks[result.action] ?? `Got it.`);
-      const reacts = { added: "⏳", merged: "✏️", skipped: "👍", split: "✂️" };
+      const pool = REMEMBER_NOW_ACKS[result.action] ?? ["ok"];
+      await message.reply(pool[Math.floor(Math.random() * pool.length)]);
+      const reacts = { added: "📅", merged: "✏️", skipped: "👍", split: "✂️" };
       const emoji = reacts[result.action];
       if (emoji) await message.react(emoji).catch(() => {});
-      if (result.temporal) await message.react("📅").catch(() => {});
     } else {
       // "remember:" from any user — permanent memory
       const result = await addLore(fact, senderName);
       log(requestId, "memory_write", { fact, addedBy: senderName, action: result.action, path: "permanent", trusted: isTrusted });
-      const acks = {
-        added:   isTrusted ? `Got it. I'll remember that.` : `noted`,
-        merged:  `Yeah I already kind of knew that, updated.`,
-        skipped: `I already know that.`,
-        capped:  `My brain is full. Someone needs to forget something first.`,
-        split:   `Got it. I split that into a memory and a rule.`,
-      };
-      await message.reply(acks[result.action] ?? `Got it.`);
+      const pool = REMEMBER_ACKS[result.action] ?? ["ok"];
+      await message.reply(pool[Math.floor(Math.random() * pool.length)]);
       const reacts = {
         added:   result.category === "directive" ? "🫡" : "🧠",
         merged:  "✏️",
