@@ -243,16 +243,29 @@ function randomInjectionDelay() {
   return INJECTION_MIN_MS + Math.random() * (INJECTION_MAX_MS - INJECTION_MIN_MS);
 }
 
-const CHIPPLE_SEED = "Matt sees the word 'chipple' and it breaks something in him — he completely crashes out, full emotional breakdown, everything bottled up comes pouring out at once. The Chicago move he didn't want. Leaving Boston. Katie's call not his. Still not in therapy. The ADHD. The depression. Harvey being sick. Customer success. Wanting Seattle. All of it. Unhinged but real. No resolution, just trails off.";
+const CHIPPLE_SEEDS = [
+  "Matt sees the word 'chipple' and it breaks something in him — he completely crashes out, full emotional breakdown, everything bottled up comes pouring out at once. The Chicago move he didn't want. Leaving Boston. Katie's call not his. Still not in therapy. The ADHD. The depression. Harvey being sick. Customer success. Wanting Seattle. All of it. Unhinged but real. No resolution, just trails off.",
+  "Matt sees 'chipple' and it hits him like a truck — but this time it's rage. Pure, directionless anger. He's mad at himself, mad at the word, mad that it still gets to him. He starts ranting about something specific — could be work, could be the move, could be something from years ago — and it spirals. He's not sad, he's furious. Trails off mid-sentence like he caught himself.",
+  "Matt sees 'chipple' and goes quiet for a second, then starts talking about something weirdly specific and mundane — a thing Katie said last week, something about the cats, a random memory from college — but there's this undercurrent of sadness running through it. He's not breaking down, he's just... leaking. Like he can't hold it all in and it's coming out sideways.",
+  "Matt sees 'chipple' and it triggers a full existential spiral. He starts questioning everything — why he's in customer success, why he never went to therapy, why he let Katie make the Chicago call, whether any of it matters. It gets philosophical in a messy, unpolished way. Not deep thoughts — just a guy staring into the void and narrating what he sees. No resolution.",
+  "Matt sees 'chipple' and snaps into a manic, stream-of-consciousness rant. He's jumping between topics — Harvey's vet bills, his Adderall prescription, that time in Vermont, the guys not gaming enough, his sister's wedding — none of it connects but all of it is real. He's talking fast and can't stop. It's not a breakdown, it's an overflow.",
+];
+
+const CHIPPLE_OPENERS = ["wait", "hold on", "oh no", "...", "stop", "don't"];
+const CHIPPLE_CLOSERS = ["...anyway", "forget I said that", "I'm fine", "whatever", "...yeah", "don't worry about it"];
 
 async function runChippleMeltdown(channel) {
   try {
+    const seed = CHIPPLE_SEEDS[Math.floor(Math.random() * CHIPPLE_SEEDS.length)];
+    const opener = CHIPPLE_OPENERS[Math.floor(Math.random() * CHIPPLE_OPENERS.length)];
+    const closer = CHIPPLE_CLOSERS[Math.floor(Math.random() * CHIPPLE_CLOSERS.length)];
+
     const [results, loreWindows] = await Promise.all([
-      retrieve(CHIPPLE_SEED, 5, "", recentExampleIds),
-      loreSearch(CHIPPLE_SEED, 3),
+      retrieve(seed, 5, "", recentExampleIds),
+      loreSearch(seed, 3),
     ]);
     const [loreResult, directives] = await Promise.all([
-      retrieveLore(CHIPPLE_SEED, 8),
+      retrieveLore(seed, 8),
       Promise.resolve(getDirectives()),
     ]);
     const { memories: retrievedMemories, personProfile } = loreResult;
@@ -261,16 +274,16 @@ async function runChippleMeltdown(channel) {
     // Send three messages with typing breaks for dramatic effect
     await channel.sendTyping();
     await new Promise((r) => setTimeout(r, 1500));
-    await channel.send("wait");
+    await channel.send(opener);
 
     await channel.sendTyping();
     await new Promise((r) => setTimeout(r, 3000));
-    const breakdown = await generate(systemPrompt, [], CHIPPLE_SEED);
+    const breakdown = await generate(systemPrompt, [], seed);
     await channel.send(breakdown);
 
     await channel.sendTyping();
     await new Promise((r) => setTimeout(r, 2000));
-    await channel.send("...anyway");
+    await channel.send(closer);
 
     log("chipple", "meltdown_sent", { preview: breakdown.slice(0, 80) });
   } catch (err) {
