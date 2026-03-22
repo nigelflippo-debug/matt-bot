@@ -567,7 +567,7 @@ client.on(Events.MessageCreate, async (message) => {
     const isPureQuestion = userMessage.endsWith("?") && userMessage.length < 60;
     const shouldExtract = inGweeod || (userMessage.length >= 10 && !isPureQuestion);
     if (shouldExtract) {
-      const priorContext = priorMessages.slice(-EXTRACTION_MESSAGES).filter(({ botDirected }) => !botDirected).map(({ name, text }) => `${name}: ${text}`);
+      const priorContext = priorMessages.slice(-EXTRACTION_MESSAGES).filter(({ isBot, botDirected }) => !isBot && !botDirected).map(({ name, text }) => `${name}: ${text}`);
       const triggerLine = (!isPureQuestion && userMessage.length >= 10) ? [`${senderName}: ${userMessage}`] : [];
       const extractionContext = [...priorContext, ...triggerLine].join("\n");
       if (extractionContext.trim()) runImplicitExtraction(extractionContext, requestId, message, inGweeod).catch(() => {});
