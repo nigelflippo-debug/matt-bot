@@ -116,14 +116,14 @@ export function pruneExpired() {
 }
 
 /**
- * Prune bot-inferred memory entries that have never been accessed and are older than 180 days.
+ * Prune bot-inferred memory entries that have never been accessed and are older than 30 days.
  * Preserves entries with source "explicit" or "url-import" regardless of access.
  * Call at startup after pruneExpired(). Returns number pruned.
  */
 export function pruneStale() {
   const entries = load();
   const now = new Date();
-  const STALE_DAYS = 180;
+  const STALE_DAYS = 30;
   const kept = [];
   let pruned = 0;
 
@@ -654,12 +654,12 @@ export async function embedPendingLore() {
 // ---------------------------------------------------------------------------
 
 /**
- * Compute access recency score: 1.0 if accessed within 7 days, scaling to 0.0 at 180 days.
+ * Compute access recency score: 1.0 if accessed within 7 days, scaling to 0.0 at 30 days.
  */
 function computeAccessRecency(lastAccessedAt) {
   if (!lastAccessedAt) return 0;
   const daysSince = (Date.now() - new Date(lastAccessedAt).getTime()) / (1000 * 60 * 60 * 24);
-  return Math.max(0, 1 - daysSince / 180);
+  return Math.max(0, 1 - daysSince / 30);
 }
 
 /**
