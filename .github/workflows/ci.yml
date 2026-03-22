@@ -10,7 +10,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  check:
+  syntax-check:
+    name: Syntax Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,7 +25,7 @@ jobs:
           cd src/rag && npm ci --omit=dev
           cd ../../src/discord-bot && npm ci --omit=dev
 
-      - name: Syntax check
+      - name: Verify all runtime files parse
         run: |
           node --check src/discord-bot/bot.js
           node --check src/rag/retrieve.js
