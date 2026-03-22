@@ -154,6 +154,65 @@ function log(requestId, stage, data = {}) {
   console.log(JSON.stringify(entry));
 }
 
+const INJECTION_SEED = "Matt aggressively asks who wants to game";
+const INJECTION_MIN_MS = 4 * 60 * 60 * 1000;  // 4 hours
+const INJECTION_MAX_MS = 8 * 60 * 60 * 1000;  // 8 hours
+
+function randomInjectionDelay() {
+  return INJECTION_MIN_MS + Math.random() * (INJECTION_MAX_MS - INJECTION_MIN_MS);
+}
+
+async function runInjection() {
+  const injectionId = `inj_${Date.now().toString(36)}`;
+  log(injectionId, "injection_start");
+
+  const channels = [];
+  for (const guild of client.guilds.cache.values()) {
+    const ch = guild.channels.cache.find((c) => c.name === "gweeod" && c.isTextBased());
+    if (ch) channels.push(ch);
+  }
+
+  if (channels.length === 0) {
+    log(injectionId, "injection_skip", { reason: "no gweeod channel found" });
+    return;
+  }
+
+  try {
+    const [results, loreWindows] = await Promise.all([
+      retrieve(INJECTION_SEED, 5, "", recentExampleIds),
+      loreSearch(INJECTION_SEED, 3),
+    ]);
+    trackExamples(results.map((r) => r.id));
+
+    const [retrievedFacts, directives, discordExamples] = await Promise.all([
+      retrieveLore(INJECTION_SEED, 8),
+      Promise.resolve(getDirectives()),
+      retrieveDiscord(INJECTION_SEED, 3),
+    ]);
+    const confirmedFacts = retrievedFacts.filter((f) => f.category !== "provisional");
+    const softFacts = retrievedFacts.filter((f) => f.category === "provisional" && f.confidence >= 0.4);
+
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, [], confirmedFacts, directives, discordExamples, softFacts);
+    const message = await generate(systemPrompt, [], INJECTION_SEED);
+
+    for (const ch of channels) {
+      await ch.send(message);
+      log(injectionId, "injection_sent", { guild: ch.guild.name, preview: message.slice(0, 80) });
+    }
+  } catch (err) {
+    log(injectionId, "injection_error", { message: err.message });
+  }
+}
+
+function scheduleInjection() {
+  const delay = randomInjectionDelay();
+  log("scheduler", "injection_scheduled", { nextInMs: Math.round(delay), nextInHours: (delay / 3600000).toFixed(2) });
+  setTimeout(async () => {
+    await runInjection();
+    scheduleInjection();
+  }, delay);
+}
+
 client.once(Events.ClientReady, async (c) => {
   const pruned = pruneExpired();
   const decay = applyDecay();
@@ -162,6 +221,8 @@ client.once(Events.ClientReady, async (c) => {
   attributePersons().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_error", message: err.message })));
   // Deduplicate legacy lore entries — no-op once store is clean
   deduplicateLore().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_error", message: err.message })));
+
+  scheduleInjection();
 });
 
 client.on(Events.MessageCreate, async (message) => {
