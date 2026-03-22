@@ -47,9 +47,9 @@ Generation (gpt-4o) ──> Discord reply
 | Lore store | `src/rag/lore-store.js` | Persistent memory — facts, directives, implicit extraction, decay |
 | Discord log | `src/rag/discord-log.js` | Logs real Matt messages from Discord for ongoing learning |
 | Encryption | `src/rag/crypto-utils.js` | AES-256-GCM encryption for sensitive content files |
-| WhatsApp processor | `src/whatsapp-processor/processor.ts` | Parses WhatsApp exports into structured corpus |
-| Enrichment | `src/rag/enrich.js` | One-time: generates semantic descriptions for all corpus entries |
-| Indexing | `src/rag/index.js` | One-time: builds Vectra vector indexes from enriched data |
+| WhatsApp processor | `tools/whatsapp-processor/processor.ts` | One-time: parses WhatsApp exports into structured corpus |
+| Enrichment | `tools/enrich.js` | One-time: generates semantic descriptions for all corpus entries |
+| Indexing | `src/rag/index.js` | Startup: builds Vectra vector indexes if missing |
 
 ## Setup
 
@@ -79,16 +79,13 @@ The corpus and persona data are encrypted at rest. Plaintext source files are ne
 
 ```bash
 # 1. Parse WhatsApp exports into corpus.json
-cd src/whatsapp-processor && npx ts-node processor.ts
+cd tools/whatsapp-processor && npx ts-node processor.ts
 
-# 2. Enrich corpus with semantic descriptions (~$0.15 via gpt-4o-mini)
-cd src/rag && npm run enrich
+# 2. Enrich corpus and build indexes (~$0.15 via gpt-4o-mini)
+cd tools && npm run pipeline
 
-# 3. Build vector indexes (~$0.003 via text-embedding-3-small)
-npm run index
-
-# 4. Encrypt all sensitive files before deployment
-npm run encrypt
+# 3. Encrypt all sensitive files before deployment
+cd tools && npm run encrypt
 ```
 
 ### Deployment

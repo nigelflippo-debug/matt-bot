@@ -2,16 +2,16 @@ import "dotenv/config";
 import path from "path";
 import readline from "readline";
 import { fileURLToPath } from "url";
-import { retrieve, enrichQuery, loreSearch } from "./retrieve.js";
-import { generate, buildSystemPrompt } from "./generate.js";
-import { loadEncryptedText } from "./crypto-utils.js";
+import { retrieve, enrichQuery, loreSearch } from "../src/rag/retrieve.js";
+import { generate, buildSystemPrompt } from "../src/rag/generate.js";
+import { loadEncryptedText } from "../src/rag/crypto-utils.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEBUG = process.argv.includes("--debug");
 
 const baseSystemPrompt = loadEncryptedText(
-  path.resolve(__dirname, "../simple/system-prompt.enc"),
-  path.resolve(__dirname, "../simple/system-prompt.md"),
+  path.resolve(__dirname, "../src/persona/system-prompt.enc"),
+  path.resolve(__dirname, "../src/persona/system-prompt.md"),
 );
 
 const history = [];

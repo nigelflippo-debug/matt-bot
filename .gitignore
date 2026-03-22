@@ -18,20 +18,16 @@ data/discord-pairs.json
 data/enriched.json
 data/corpus.json
 data/lore.json
-src/simple/system-prompt.md
-
-# Persona plans and drafts (contain personal data)
 src/persona/system-prompt.md
-src/persona/plan.md
 
-# One-time data mining scripts and artifacts (contain personal data)
-src/simple/lore-candidates.txt
-src/simple/lore-extracted.md
-src/simple/politics-extracted.md
-src/simple/extract-lore.js
-src/simple/import-lore.js
-src/simple/mine-lore.js
-src/simple/mine-politics.js
+# One-time data mining artifacts (contain personal data, kept locally)
+src/persona/lore-candidates.txt
+src/persona/lore-extracted.md
+src/persona/politics-extracted.md
+src/persona/extract-lore.js
+src/persona/import-lore.js
+src/persona/mine-lore.js
+src/persona/mine-politics.js
 
 # Session files — internal working notes
 sessions/

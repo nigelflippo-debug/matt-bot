@@ -23,10 +23,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const corpusPath = path.resolve(__dirname, "../../data/corpus.json");
-const enrichedPath = path.resolve(__dirname, "../../data/enriched.json");
-const pairIndexPath = path.resolve(__dirname, "../../data/index-pair");
-const windowIndexPath = path.resolve(__dirname, "../../data/index-window");
+const corpusPath = path.resolve(__dirname, "../data/corpus.json");
+const enrichedPath = path.resolve(__dirname, "../data/enriched.json");
+const pairIndexPath = path.resolve(__dirname, "../data/index-pair");
+const windowIndexPath = path.resolve(__dirname, "../data/index-window");
 
 const ENRICH_BATCH = 20;   // records per LLM enrichment call
 const EMBED_BATCH = 20;    // records per embedding call (matches enrich batch for pipelining)

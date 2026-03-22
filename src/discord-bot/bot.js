@@ -19,8 +19,8 @@ import { loadEncryptedText } from "../rag/crypto-utils.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const baseSystemPrompt = loadEncryptedText(
-  path.resolve(__dirname, "../simple/system-prompt.enc"),
-  path.resolve(__dirname, "../simple/system-prompt.md"),
+  path.resolve(__dirname, "../persona/system-prompt.enc"),
+  path.resolve(__dirname, "../persona/system-prompt.md"),
 );
 
 // How many recent messages to fetch total

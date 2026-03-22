@@ -1,0 +1,17 @@
+{
+  "name": "matt-bot-tools",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "encrypt": "node encrypt.js",
+    "enrich": "node enrich.js",
+    "pipeline": "node pipeline.js",
+    "test:rag": "node test-rag.js",
+    "test:simple": "node test-simple.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "openai": "^4.0.0",
+    "vectra": "^0.9.0"
+  }
+}

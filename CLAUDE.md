@@ -6,28 +6,32 @@ Discord bot that responds as Matt Guiod, using RAG retrieval over his real Whats
 
 ```
 matt-bot/
-├── src/
-│   ├── discord-bot/     # Bot runtime — event handling, commands, context assembly
-│   │   └── bot.js       # Main entry point
-│   ├── rag/             # Core pipeline
-│   │   ├── retrieve.js  # Query enrichment, dual-index vector search, keyword search, reranking
-│   │   ├── generate.js  # System prompt builder + OpenAI generation
+├── src/                     # Runtime code (what the Dockerfile deploys)
+│   ├── discord-bot/
+│   │   └── bot.js           # Entry point — event handling, commands, context assembly
+│   ├── rag/
+│   │   ├── retrieve.js      # Query enrichment, dual-index vector search, keyword search, reranking
+│   │   ├── generate.js      # System prompt builder + OpenAI generation
 │   │   ├── lore-store.js    # Persistent memory — facts, directives, implicit extraction, decay
 │   │   ├── discord-log.js   # Logs real Matt messages from Discord for ongoing learning
 │   │   ├── crypto-utils.js  # AES-256-GCM encryption/decryption
-│   │   ├── encrypt.js       # CLI: encrypt plaintext files before deployment
-│   │   ├── enrich.js        # One-time: generate semantic descriptions for corpus
-│   │   ├── index.js         # One-time: build Vectra vector indexes
-│   │   ├── merge-lore.js    # Startup: seed lore from image into persistent volume
-│   │   └── pipeline.js      # One-time: full enrich + index pipeline
-│   ├── simple/          # Test harness + encrypted system prompt
-│   └── whatsapp-processor/  # One-time corpus parser (TypeScript)
-├── data/                # Encrypted .enc files only (plaintext gitignored)
+│   │   ├── index.js         # Startup: build Vectra vector indexes (if missing)
+│   │   └── merge-lore.js    # Startup: seed lore from image into persistent volume
+│   └── persona/
+│       └── system-prompt.enc  # Encrypted persona prompt
+├── tools/                   # One-time scripts and dev utilities (not deployed)
+│   ├── encrypt.js           # Encrypt plaintext files before deployment
+│   ├── enrich.js            # Generate semantic descriptions for corpus (one-time)
+│   ├── pipeline.js          # Combined enrich + index (one-time)
+│   ├── test-rag.js          # Interactive test CLI (RAG pipeline)
+│   ├── test-simple.js       # Interactive test CLI (simple pipeline)
+│   └── whatsapp-processor/  # Parse WhatsApp exports into corpus (one-time)
+├── data/                    # Encrypted .enc files only (plaintext gitignored)
 ├── docs/
-│   ├── plans/           # Feature design documents
-│   ├── sops/            # Standard Operating Procedures (for Claude)
-│   └── PROJECT.md       # Original project spec and architecture decisions
-├── sessions/            # Session resumption files (gitignored, local only)
+│   ├── plans/               # Feature design documents
+│   ├── sops/                # Standard Operating Procedures (for Claude)
+│   └── PROJECT.md           # Original project spec and architecture decisions
+├── sessions/                # Session resumption files (gitignored, local only)
 ├── Dockerfile
 └── railway.toml
 ```
@@ -59,16 +63,17 @@ Implicit memory:
 | `OPENAI_API_KEY` | Yes | OpenAI API (embeddings + generation) |
 | `CONTENT_ENCRYPTION_KEY` | Yes (prod) | 64-char hex key for AES-256-GCM decryption |
 | `OPENAI_MODEL` | No | Override generation model (default: `gpt-4o`) |
+| `SPAM_USER_ID` | No | Discord user ID for spam rate limiting |
 
 ## Encryption
 
 All sensitive content is encrypted at rest. **Never commit plaintext data files.**
 
 - `data/corpus.enc`, `data/enriched.enc`, `data/lore.enc` — encrypted JSON data
-- `src/simple/system-prompt.enc` — encrypted persona prompt
+- `src/persona/system-prompt.enc` — encrypted persona prompt
 - Plaintext equivalents are gitignored and exist only locally
 - `loadEncryptedJson()` / `loadEncryptedText()` in `crypto-utils.js` handle decryption with fallback to plaintext for local dev (no key needed locally)
-- Run `cd src/rag && npm run encrypt` after any changes to plaintext source files
+- Run `cd tools && npm run encrypt` after any changes to plaintext source files
 
 ## Deployment
 
@@ -80,10 +85,19 @@ All sensitive content is encrypted at rest. **Never commit plaintext data files.
 ## Development
 
 ```bash
+# Install tools dependencies (first time)
+cd tools && npm install
+
 # Test locally (needs .env with OPENAI_API_KEY, plaintext data files in data/)
-cd src/rag && node test.js          # RAG pipeline test CLI
-cd src/simple && node test.js       # Simple pipeline test CLI
-cd src/rag && node test.js --debug  # Shows enriched query + retrieved examples
+cd tools && node test-rag.js          # RAG pipeline test CLI
+cd tools && node test-simple.js       # Simple pipeline test CLI
+cd tools && node test-rag.js --debug  # Shows enriched query + retrieved examples
+
+# Encrypt before deploying
+cd tools && npm run encrypt
+
+# Rebuild corpus (one-time)
+cd tools && npm run pipeline
 ```
 
 ## Bot Commands
@@ -105,7 +119,8 @@ At the end of a working session (or at a natural checkpoint), write patch notes 
 
 ## Conventions
 
+- `src/` is runtime-only code — what the Dockerfile deploys. No scripts, no tests, no one-time tools.
+- `tools/` is everything else — encryption, enrichment, testing, corpus processing
 - Sensitive content is always encrypted before commit — never commit plaintext corpus, lore, or system prompt
-- Source code goes in `src/` with a subdirectory per component
 - Feature plans go in `docs/plans/`
-- The system prompt lives encrypted at `src/simple/system-prompt.enc` — edit the plaintext locally, then run encrypt
+- The system prompt lives encrypted at `src/persona/system-prompt.enc` — edit the plaintext locally, then run `cd tools && npm run encrypt`

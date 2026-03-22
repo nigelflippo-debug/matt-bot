@@ -14,17 +14,17 @@ import "dotenv/config";
 import { existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { keyFromHex, encryptFile } from "./crypto-utils.js";
+import { keyFromHex, encryptFile } from "../src/rag/crypto-utils.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.resolve(__dirname, "../../data");
-const implDir = path.resolve(__dirname, "..");
+const dataDir = path.resolve(__dirname, "../data");
+const srcDir = path.resolve(__dirname, "../src");
 
 const FILES = [
   { src: "enriched.json", dest: "enriched.enc", dir: dataDir },
   { src: "corpus.json",   dest: "corpus.enc",   dir: dataDir },
   { src: "lore.json",     dest: "lore.enc",     dir: dataDir },
-  { src: "system-prompt.md", dest: "system-prompt.enc", dir: path.join(implDir, "simple") },
+  { src: "system-prompt.md", dest: "system-prompt.enc", dir: path.join(srcDir, "persona") },
 ];
 
 const keyHex = process.env.CONTENT_ENCRYPTION_KEY;

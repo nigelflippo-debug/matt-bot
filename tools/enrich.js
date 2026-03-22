@@ -19,8 +19,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const corpusPath = path.resolve(__dirname, "../../data/corpus.json");
-const enrichedPath = path.resolve(__dirname, "../../data/enriched.json");
+const corpusPath = path.resolve(__dirname, "../data/corpus.json");
+const enrichedPath = path.resolve(__dirname, "../data/enriched.json");
 
 const CONTEXT_TURNS = 3;   // max preceding speaker-turns (non-Matt) to include
 const WINDOW_AFTER = 2;    // following messages to include in window_text
