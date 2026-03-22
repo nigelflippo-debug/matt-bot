@@ -15,6 +15,7 @@ import { generate, buildSystemPrompt } from "../rag/generate.js";
 import { addLore, removeLore, getAllLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, applyDecay, extractImplicit, addImplicit, addUserAsserted, attributePersons, deduplicateLore } from "../rag/lore-store.js";
 import { logMattMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 import { loadEncryptedText } from "../rag/crypto-utils.js";
+import { readUrl } from "../rag/url-reader.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -65,6 +66,10 @@ const SPAM_WINDOW_MS = 20_000;   // 20 second window
 const SPAM_THRESHOLD = 3;        // messages before timeout
 const SPAM_TIMEOUT_MS = 60_000;  // 1 minute timeout
 const spamTimestamps = [];
+
+// URL reader cooldown — one URL per user per 5 minutes
+const URL_COOLDOWN_MS = 5 * 60 * 1000;
+const urlCooldowns = new Map(); // userId -> timestamp
 
 const TIMEOUT_LINES = [
   "I am the real Matt. Shut up Matt.",
@@ -380,6 +385,89 @@ client.on(Events.MessageCreate, async (message) => {
     } else {
       const list = removedEntries.map((e) => `• [${e.category}] ${e.text}`).join("\n");
       await message.reply(`Forgotten ${removed} thing${removed === 1 ? "" : "s"}:\n${list}`);
+    }
+    return;
+  }
+
+  // Handle "read: <url>" — fetch a URL and extract facts into lore (admin only)
+  const readMatch = userMessage.match(/^read:\s*(https?:\/\/\S+)/i);
+  if (readMatch) {
+    if (!isAdmin(message.author.id)) {
+      await message.reply(`nah`);
+      return;
+    }
+
+    const url = readMatch[1];
+
+    // Cooldown check
+    const lastRead = urlCooldowns.get(message.author.id) ?? 0;
+    if (Date.now() - lastRead < URL_COOLDOWN_MS) {
+      await message.reply(`Slow down, I'm still digesting the last one.`);
+      return;
+    }
+    urlCooldowns.set(message.author.id, Date.now());
+
+    await message.channel.sendTyping();
+    const typingInterval = setInterval(() => message.channel.sendTyping(), 8000);
+    log(requestId, "url_read_start", { url });
+
+    try {
+      const { facts, pageTitle, error } = await readUrl(url);
+
+      clearInterval(typingInterval);
+
+      if (error) {
+        const errorMessages = {
+          "timeout": "Couldn't reach that URL — timed out.",
+          "not-html": "That doesn't look like a web page.",
+          "too-large": "That page is way too big for me to read.",
+          "no-content": "Couldn't find anything useful on that page.",
+          "fetch-failed": "Couldn't reach that URL.",
+        };
+        await message.reply(errorMessages[error] ?? "Something went wrong reading that.");
+        log(requestId, "url_read_error", { url, error });
+        return;
+      }
+
+      if (facts.length === 0) {
+        await message.reply(`Read "${pageTitle}" but didn't find anything worth remembering.`);
+        log(requestId, "url_read_empty", { url, pageTitle });
+        return;
+      }
+
+      // Store each fact as a permanent lore entry
+      let added = 0;
+      let skipped = 0;
+      const sampleFacts = [];
+
+      for (const fact of facts) {
+        const result = await addLore(fact, senderName, { source: "url-import", sourceUrl: url });
+        log(requestId, "url_fact_store", { fact: fact.slice(0, 80), action: result.action });
+        if (result.action === "added" || result.action === "split") {
+          added++;
+          if (sampleFacts.length < 3) sampleFacts.push(fact);
+        } else {
+          skipped++;
+        }
+      }
+
+      // Build response
+      const samples = sampleFacts.map((f) => `• ${f}`).join("\n");
+      if (added === 0) {
+        await message.reply(`Read "${pageTitle}" — already knew all of that.`);
+      } else {
+        const skipNote = skipped > 0 ? ` (${skipped} already known)` : "";
+        await message.reply(`Read "${pageTitle}" — learned ${added} thing${added === 1 ? "" : "s"}${skipNote}:\n${samples}${added > 3 ? `\n…and ${added - 3} more` : ""}`);
+      }
+      await message.react("📖").catch(() => {});
+      log(requestId, "url_read_complete", { url, pageTitle, added, skipped, total: facts.length });
+
+      // Embed new entries in background
+      embedPendingLore().catch(() => {});
+    } catch (err) {
+      clearInterval(typingInterval);
+      log(requestId, "url_read_error", { url, message: err.message });
+      await message.reply(`Something went wrong reading that page.`);
     }
     return;
   }

@@ -414,19 +414,19 @@ function detectTemporalExpiry(text, now = new Date()) {
  * then coalescing each part with existing same-category entries.
  * Returns { action: 'added' | 'merged' | 'skipped' | 'capped' | 'split', category? }
  */
-export async function addLore(text, addedBy = "unknown") {
+export async function addLore(text, addedBy = "unknown", opts = {}) {
   const parts = await splitOrClassify(text);
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_classified", parts: parts.map((p) => ({ category: p.category, person: p.person, text: p.text.slice(0, 60) })) }));
 
   if (parts.length > 1) {
-    await Promise.all(parts.map((p) => addSingle(p.text, p.category, addedBy, p.person)));
+    await Promise.all(parts.map((p) => addSingle(p.text, p.category, addedBy, p.person, opts)));
     return { action: "split" };
   }
 
-  return addSingle(parts[0].text, parts[0].category, addedBy, parts[0].person);
+  return addSingle(parts[0].text, parts[0].category, addedBy, parts[0].person, opts);
 }
 
-async function addSingle(text, category, addedBy, person = null) {
+async function addSingle(text, category, addedBy, person = null, opts = {}) {
   const entries = load();
   const sameCat = entries.filter((e) => e.category === category);
 
@@ -502,7 +502,7 @@ async function addSingle(text, category, addedBy, person = null) {
     person,
     category,
     confidence,
-    source: "explicit",
+    source: opts.source ?? "explicit",
     lifespan,
     expiresAt,
     scope: "global",
@@ -510,9 +510,10 @@ async function addSingle(text, category, addedBy, person = null) {
     addedBy,
     addedAt: now.toISOString(),
     updatedAt: null,
+    ...(opts.sourceUrl ? { sourceUrl: opts.sourceUrl } : {}),
   });
   save(entries);
-  console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_added", category, person, confidence, lifespan, expiresAt, text: text.slice(0, 80) }));
+  console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_added", category, person, confidence, lifespan, expiresAt, source: opts.source ?? "explicit", text: text.slice(0, 80) }));
   if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category, person, expiresAt: temporalExpiry, text: text.slice(0, 80) }));
   return { action: "added", category, temporal: !!temporalExpiry };
 }
