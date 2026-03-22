@@ -10,28 +10,11 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  syntax-check:
-    name: Syntax Check
+  build:
+    name: Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install runtime dependencies
-        run: |
-          cd src/rag && npm ci --omit=dev
-          cd ../../src/discord-bot && npm ci --omit=dev
-
-      - name: Verify all runtime files parse
-        run: |
-          node --check src/discord-bot/bot.js
-          node --check src/rag/retrieve.js
-          node --check src/rag/generate.js
-          node --check src/rag/lore-store.js
-          node --check src/rag/discord-log.js
-          node --check src/rag/crypto-utils.js
-          node --check src/rag/merge-lore.js
-          node --check src/rag/index.js
+      - name: Build Docker image
+        run: docker build -t matt-bot:ci .
