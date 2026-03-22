@@ -46,22 +46,33 @@ function load() {
   }
 
   // Migration: backfill id, category, embedded for pre-v2 entries
-  // Also backfill v3 governance fields: confidence, source, lifespan, expiresAt, scope, updatedAt
+  // Also backfill v3 governance fields: confidence, source, expiresAt, scope, updatedAt
+  // v4: collapse fact/episodic/provisional → memory; add lastAccessedAt
+  const now30 = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   let dirty = false;
   for (const entry of entries) {
     if (!entry.id) { entry.id = makeId(); dirty = true; }
-    if (!entry.category) { entry.category = "fact"; dirty = true; }
+    if (!entry.category) { entry.category = "memory"; dirty = true; }
+    // v4: collapse legacy categories to "memory"
+    if (["fact", "episodic", "provisional"].includes(entry.category)) {
+      // old provisional with no expiry: give 30-day TTL so they age out naturally
+      if (entry.category === "provisional" && !entry.expiresAt) {
+        entry.expiresAt = now30;
+      }
+      entry.category = "memory";
+      dirty = true;
+    }
     if (entry.embedded === undefined) { entry.embedded = false; dirty = true; }
     if (entry.confidence === undefined) { entry.confidence = 1.0; dirty = true; }
     if (entry.source === undefined) {
       entry.source = entry.addedBy === "consolidation" ? "bulk-import" : "explicit";
       dirty = true;
     }
-    if (entry.lifespan === undefined) { entry.lifespan = "permanent"; dirty = true; }
     if (!Object.prototype.hasOwnProperty.call(entry, "expiresAt")) { entry.expiresAt = null; dirty = true; }
     if (entry.scope === undefined) { entry.scope = "global"; dirty = true; }
     if (!Object.prototype.hasOwnProperty.call(entry, "updatedAt")) { entry.updatedAt = null; dirty = true; }
     if (!Object.prototype.hasOwnProperty.call(entry, "person")) { entry.person = null; dirty = true; }
+    if (!Object.prototype.hasOwnProperty.call(entry, "lastAccessedAt")) { entry.lastAccessedAt = null; dirty = true; }
   }
   if (dirty) fs.writeFileSync(lorePath, JSON.stringify(entries, null, 2));
 
@@ -105,22 +116,22 @@ export function pruneExpired() {
 }
 
 /**
- * Decay confidence on bot-inferred provisional entries based on age.
- * Linear decay from 0.6 (day 0) to 0.3 (day 30). Entries at or below 0.3 are pruned.
- * Call at startup after pruneExpired(). Returns { decayed, pruned }.
+ * Prune bot-inferred memory entries that have never been accessed and are older than 180 days.
+ * Preserves entries with source "explicit" or "url-import" regardless of access.
+ * Call at startup after pruneExpired(). Returns number pruned.
  */
-export function applyDecay() {
+export function pruneStale() {
   const entries = load();
   const now = new Date();
+  const STALE_DAYS = 180;
   const kept = [];
-  let decayed = 0;
   let pruned = 0;
 
   for (const entry of entries) {
-    if (entry.category !== "provisional" || entry.source !== "bot-inferred") {
-      kept.push(entry);
-      continue;
-    }
+    const isProtected = entry.source === "explicit" || entry.source === "url-import" || entry.category === "directive";
+    if (isProtected) { kept.push(entry); continue; }
+
+    if (entry.lastAccessedAt !== null) { kept.push(entry); continue; }
 
     let ageInDays = 0;
     try {
@@ -130,43 +141,35 @@ export function applyDecay() {
       }
     } catch { /* treat as age 0 */ }
 
-    const newConfidence = Math.max(0.3, 0.6 - (ageInDays / 90) * 0.3);
-
-    if (newConfidence <= 0.3) {
+    if (ageInDays >= STALE_DAYS) {
       pruned++;
-      continue;
+    } else {
+      kept.push(entry);
     }
-
-    if (Math.abs(newConfidence - entry.confidence) > 0.001) {
-      entry.confidence = Math.round(newConfidence * 1000) / 1000;
-      decayed++;
-    }
-    kept.push(entry);
   }
 
-  if (decayed > 0 || pruned > 0) {
+  if (pruned > 0) {
     save(kept);
-    console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_decay", decayed, pruned }));
+    console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_stale_pruned", count: pruned }));
   }
 
-  return { decayed, pruned };
+  return pruned;
 }
 
 // ---------------------------------------------------------------------------
 // LLM: classify
 // ---------------------------------------------------------------------------
 
-const SPLIT_OR_CLASSIFY_SYSTEM = `You process a memory entry for a fact store. Break it into one or more categorized parts.
+const SPLIT_OR_CLASSIFY_SYSTEM = `You process a memory entry for a memory store. Break it into one or more categorized parts.
 
 Categories:
 - "directive" — a behavioral rule for the bot (how it should speak or respond). Examples: "Don't use the word delve", "Never bring up X topic"
-- "fact" — a permanent memory, lore, personal detail, or event. Default for most entries.
-- "episodic" — explicitly temporary information. Use when the input contains phrases like "for now", "today", "tonight", "tomorrow", "this week", "this weekend", "next week", "this month", "next month", "next year", "temporarily", "just for today", or other clear short-term signals.
+- "memory" — anything worth remembering: personal details, events, opinions, plans, preferences. Default for most entries.
 
-Return a JSON object with a "parts" array. Each part has "text", "category", and "person" (the first name of the person the fact is about, or null if not person-specific — always null for directives).
-If the entry is a single thing, return one part. If it mixes facts and directives, split them into separate parts — one per distinct fact or rule.
+Return a JSON object with a "parts" array. Each part has "text", "category", and "person" (the first name of the person the memory is about, or null if not person-specific — always null for directives).
+If the entry is a single thing, return one part. If it mixes memories and directives, split them into separate parts — one per distinct memory or rule.
 
-{"parts": [{"text": "...", "category": "fact"|"directive"|"episodic", "person": "<first name or null>"}, ...]}
+{"parts": [{"text": "...", "category": "memory"|"directive", "person": "<first name or null>"}, ...]}
 
 Only split when parts are clearly distinct. When in doubt, return a single part.
 Respond with JSON only — no markdown.`;
@@ -176,7 +179,7 @@ Respond with JSON only — no markdown.`;
  * Returns an array of {text, category} objects.
  */
 async function splitOrClassify(text) {
-  const VALID_CATEGORIES = new Set(["directive", "fact", "episodic"]);
+  const VALID_CATEGORIES = new Set(["directive", "memory"]);
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -195,9 +198,9 @@ async function splitOrClassify(text) {
         person: typeof p.person === "string" && p.person.length > 0 ? p.person : null,
       }));
     }
-    return [{ text, category: "fact", person: null }];
+    return [{ text, category: "memory", person: null }];
   } catch {
-    return [{ text, category: "fact", person: null }]; // default: never lose an entry
+    return [{ text, category: "memory", person: null }]; // default: never lose an entry
   }
 }
 
@@ -326,6 +329,12 @@ async function preFilterCandidates(text, candidates, n = 20) {
 function detectTemporalExpiry(text, now = new Date()) {
   const t = text.toLowerCase();
 
+  // "for now" / "temporarily" — 7-day expiry (replaces the old "episodic" category)
+  if (/\b(for now|temporarily|just for now|for the time being)\b/.test(t)) {
+    const end = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    return end.toISOString();
+  }
+
   if (/\b(today|tonight|this morning|this afternoon|this evening)\b/.test(t)) {
     const end = new Date(now);
     end.setHours(23, 59, 59, 999);
@@ -410,7 +419,7 @@ function detectTemporalExpiry(text, now = new Date()) {
 // ---------------------------------------------------------------------------
 
 /**
- * Add a new entry, splitting if it contains both a fact and a directive,
+ * Add a new entry, splitting if it contains both a memory and a directive,
  * then coalescing each part with existing same-category entries.
  * Returns { action: 'added' | 'merged' | 'skipped' | 'capped' | 'split', category? }
  */
@@ -437,7 +446,7 @@ async function addSingle(text, category, addedBy, person = null, opts = {}) {
 
   const candidates = category === "directive" ? sameCat : await preFilterCandidates(text, sameCat);
   const result = await coalesce(text, candidates);
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_coalesce", category, person, text: text.slice(0, 60), candidateCount: candidates.length, result }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "memory_coalesce", category, person, text: text.slice(0, 60), candidateCount: candidates.length, result }));
 
   if (result.action === "skip") {
     return { action: "skipped", category };
@@ -455,14 +464,14 @@ async function addSingle(text, category, addedBy, person = null, opts = {}) {
         updatedAt: new Date().toISOString(),
       };
       save(entries);
-      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_merged", category, person, id: targetId, text: result.merged.slice(0, 80) }));
+      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "memory_merged", category, person, id: targetId, text: result.merged.slice(0, 80) }));
       return { action: "merged", category };
     }
   }
 
   // coalesce returned "add" — check for contradictions before writing
-  if (category === "fact" || category === "episodic") {
-    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_contradiction_check", category, person, candidateCount: candidates.length, text: text.slice(0, 60) }));
+  if (category === "memory") {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "memory_contradiction_check", category, person, candidateCount: candidates.length, text: text.slice(0, 60) }));
     const contradiction = await checkContradiction(text, candidates);
     if (contradiction.contradicts && typeof contradiction.index === "number" && candidates[contradiction.index]) {
       const targetId = candidates[contradiction.index].id;
@@ -478,43 +487,37 @@ async function addSingle(text, category, addedBy, person = null, opts = {}) {
           updatedAt: new Date().toISOString(),
         };
         save(entries);
-        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_contradiction", category, person, id: targetId, old: oldEntry.text.slice(0, 80), new: text.slice(0, 80) }));
+        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "memory_contradiction", category, person, id: targetId, old: oldEntry.text.slice(0, 80), new: text.slice(0, 80) }));
         return { action: "merged", category, contradiction: true };
       }
     } else {
-      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_contradiction_clear", category, person, text: text.slice(0, 60) }));
+      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "memory_contradiction_clear", category, person, text: text.slice(0, 60) }));
     }
   }
 
   const now = new Date();
   const temporalExpiry = detectTemporalExpiry(text, now);
-  const defaultEpisodicExpiry = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  const expiresAt = temporalExpiry ?? (category === "episodic" ? defaultEpisodicExpiry : null);
-  const isTemporalFact = temporalExpiry && category !== "episodic";
-  const confidenceByCategory = { directive: 1.0, fact: 1.0, episodic: 0.8, provisional: 0.6 };
-  const lifespanByCategory = { directive: "permanent", fact: "permanent", episodic: "temporary", provisional: "long-lived" };
-  const confidence = temporalExpiry ? 1.0 : (confidenceByCategory[category] ?? 1.0);
-  const lifespan = (isTemporalFact || category === "episodic") ? "temporary" : (lifespanByCategory[category] ?? "permanent");
+  const expiresAt = temporalExpiry ?? null;
 
   entries.push({
     id: makeId(),
     text,
     person,
     category,
-    confidence,
+    confidence: 1.0,
     source: opts.source ?? "explicit",
-    lifespan,
     expiresAt,
     scope: "global",
     embedded: false,
+    lastAccessedAt: null,
     addedBy,
     addedAt: now.toISOString(),
     updatedAt: null,
     ...(opts.sourceUrl ? { sourceUrl: opts.sourceUrl } : {}),
   });
   save(entries);
-  console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_added", category, person, confidence, lifespan, expiresAt, source: opts.source ?? "explicit", text: text.slice(0, 80) }));
-  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category, person, expiresAt: temporalExpiry, text: text.slice(0, 80) }));
+  console.log(JSON.stringify({ ts: now.toISOString(), stage: "memory_added", category, person, expiresAt, source: opts.source ?? "explicit", text: text.slice(0, 80) }));
+  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "memory_temporal", category, person, expiresAt: temporalExpiry, text: text.slice(0, 80) }));
   return { action: "added", category, temporal: !!temporalExpiry };
 }
 
@@ -592,7 +595,7 @@ export async function removeLore(query) {
     }
   }
 
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_removed", count: toRemove.length, ids: toRemove.map((e) => e.id) }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "memory_removed", count: toRemove.length, ids: toRemove.map((e) => e.id) }));
   return { removed: toRemove.length, entries: toRemove.map((e) => ({ id: e.id, text: e.text, category: e.category })) };
 }
 
@@ -607,7 +610,7 @@ export async function removeLore(query) {
  */
 export async function embedPendingLore() {
   const entries = load();
-  const pending = entries.filter((e) => (e.category === "fact" || e.category === "episodic" || e.category === "provisional") && e.embedded === false);
+  const pending = entries.filter((e) => e.category === "memory" && e.embedded === false);
 
   if (pending.length === 0) {
     console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_embed_check", pending: 0 }));
@@ -651,11 +654,24 @@ export async function embedPendingLore() {
 // ---------------------------------------------------------------------------
 
 /**
- * Retrieve the top K most relevant fact entries for a given query.
+ * Compute access recency score: 1.0 if accessed within 7 days, scaling to 0.0 at 180 days.
+ */
+function computeAccessRecency(lastAccessedAt) {
+  if (!lastAccessedAt) return 0;
+  const daysSince = (Date.now() - new Date(lastAccessedAt).getTime()) / (1000 * 60 * 60 * 24);
+  return Math.max(0, 1 - daysSince / 180);
+}
+
+/**
+ * Retrieve the top K most relevant memory entries for a given query.
+ * Blends semantic similarity (70%) with access recency (30%) for ranking.
+ * If a named person is detected in the query, builds a full entity profile for them.
  * embedPendingLore() should be called before this.
+ *
+ * Returns { memories: entry[], personProfile: { person: string, memories: entry[] } | null }
  */
 export async function retrieveLore(query, k = 5) {
-  if (!(await loreIndex.isIndexCreated())) return [];
+  if (!(await loreIndex.isIndexCreated())) return { memories: [], personProfile: null };
 
   const embResponse = await openai.embeddings.create({
     model: "text-embedding-3-small",
@@ -667,44 +683,83 @@ export async function retrieveLore(query, k = 5) {
 
   const entries = load();
   const entryById = new Map(entries.map((e) => [e.id, e]));
-
   const queryLower = query.toLowerCase();
+
+  // Salience scoring: blend semantic similarity with access recency
   const scored = results
-    .map((r) => ({ entry: entryById.get(r.item.metadata.id), score: r.score }))
-    .filter(({ entry }) => Boolean(entry))
-    .sort((a, b) => (b.score * b.entry.confidence) - (a.score * a.entry.confidence))
+    .map((r) => {
+      const entry = entryById.get(r.item.metadata.id);
+      if (!entry) return null;
+      const salience = r.score * 0.7 + computeAccessRecency(entry.lastAccessedAt) * 0.3;
+      return { entry, salience };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.salience - a.salience)
     .map(({ entry }) => entry);
 
-  // Boost person-tagged entries whose person appears in the query
+  // Person boost: surface person-specific memories to the top
   const personMatches = scored.filter((e) => e.person && queryLower.includes(e.person.toLowerCase()));
   const others = scored.filter((e) => !e.person || !queryLower.includes(e.person.toLowerCase()));
-  const retrieved = [...personMatches, ...others];
+  const memories = [...personMatches, ...others];
+
+  // Entity profile: if query mentions a known person, pull all their tagged memories
+  const allPersonNames = [...new Set(entries.filter((e) => e.person && e.category === "memory").map((e) => e.person))];
+  const mentionedPerson = allPersonNames.find((p) => queryLower.includes(p.toLowerCase()));
+  let personProfile = null;
+
+  if (mentionedPerson) {
+    const profileMemories = entries
+      .filter((e) => e.category === "memory" && e.person?.toLowerCase() === mentionedPerson.toLowerCase())
+      .sort((a, b) => (b.lastAccessedAt ?? "") > (a.lastAccessedAt ?? "") ? 1 : -1)
+      .slice(0, 15);
+    if (profileMemories.length > 0) {
+      personProfile = { person: mentionedPerson, memories: profileMemories };
+    }
+  }
 
   // Append recent extractions not yet embedded — bridges the extraction-to-embedding gap
-  const now = Date.now();
-  const recentValid = recentExtractions.filter((r) => now - r.addedAt < RECENT_EXTRACTION_TTL_MS);
+  const nowMs = Date.now();
+  const recentValid = recentExtractions.filter((r) => nowMs - r.addedAt < RECENT_EXTRACTION_TTL_MS);
   recentExtractions.length = 0;
   recentExtractions.push(...recentValid);
   let recentInjected = 0;
 
   for (const recent of recentValid) {
     if (recent.person && queryLower.includes(recent.person.toLowerCase())) {
-      const alreadyPresent = retrieved.some((e) => e.text === recent.text);
+      const alreadyPresent = memories.some((e) => e.text === recent.text);
       if (!alreadyPresent) {
-        retrieved.push({
+        memories.push({
           id: "recent",
           text: recent.text,
           person: recent.person,
-          category: "provisional",
-          confidence: 0.6,
+          category: "memory",
+          lastAccessedAt: null,
         });
         recentInjected++;
       }
     }
   }
 
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_retrieve", count: retrieved.length, personBoosted: personMatches.length, recentInjected, facts: retrieved.map((e) => ({ text: e.text.slice(0, 60), person: e.person })) }));
-  return retrieved;
+  // Update lastAccessedAt on all returned entries
+  const returnedIds = new Set([
+    ...memories.map((e) => e.id),
+    ...(personProfile?.memories ?? []).map((e) => e.id),
+  ].filter((id) => id !== "recent"));
+
+  if (returnedIds.size > 0) {
+    const nowIso = new Date().toISOString();
+    let accessDirty = false;
+    for (const entry of entries) {
+      if (returnedIds.has(entry.id)) {
+        entry.lastAccessedAt = nowIso;
+        accessDirty = true;
+      }
+    }
+    if (accessDirty) save(entries);
+  }
+
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "memory_retrieve", count: memories.length, personProfile: personProfile?.person ?? null, personProfileCount: personProfile?.memories.length ?? 0, personBoosted: personMatches.length, recentInjected, memories: memories.map((e) => ({ text: e.text.slice(0, 60), person: e.person })) }));
+  return { memories, personProfile };
 }
 
 // ---------------------------------------------------------------------------
@@ -745,7 +800,7 @@ export async function deduplicateLore() {
 
   const allEntries = load();
   const targets = allEntries
-    .filter((e) => (e.category === "fact" || e.category === "episodic") && e.embedded)
+    .filter((e) => e.category === "memory" && e.embedded)
     .sort((a, b) => new Date(a.addedAt) - new Date(b.addedAt)); // oldest = canonical
 
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_start", total: targets.length }));
@@ -939,7 +994,6 @@ Return a JSON object: {"facts": [{"text": "...", "person": "<first name of perso
 Return {"facts": []} if nothing is worth capturing.
 No markdown, JSON only.`;
 
-const PROVISIONAL_EXPIRY_DAYS = 90;
 
 /**
  * Extract memory-worthy content from a conversation snippet.
@@ -974,178 +1028,64 @@ export async function extractImplicit(conversationText) {
 }
 
 /**
- * Store an implicitly extracted fact.
+ * Store an implicitly extracted memory.
  *
- * - Matches existing fact        → skip (already known)
- * - Matches existing provisional → promote provisional to permanent fact
- * - No match                     → add as provisional (expires in 30 days)
+ * - Matches existing memory → skip (already known) or update if merge improves it
+ * - No match               → add as memory
  *
- * Returns { action: 'known' | 'promoted' | 'added' }
+ * Returns { action: 'known' | 'added', temporal?: boolean }
  */
 export async function addImplicit(text, source = "bot-inferred", person = null) {
   const entries = load();
 
-  // Check against existing facts — skip if already known
-  const facts = entries.filter((e) => e.category === "fact");
-  if (facts.length > 0) {
-    const factCandidates = await preFilterCandidates(text, facts);
-    const factResult = await coalesce(text, factCandidates);
-    if (factResult.action === "skip" || factResult.action === "merge") {
-      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_skip", reason: "known_fact", person, text: text.slice(0, 80) }));
+  // Check against existing memories — skip or merge if already known
+  const memories = entries.filter((e) => e.category === "memory");
+  if (memories.length > 0) {
+    const candidates = await preFilterCandidates(text, memories);
+    const result = await coalesce(text, candidates);
+    if (result.action === "skip") {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_skip", reason: "known", person, text: text.slice(0, 80) }));
       return { action: "known" };
     }
-  }
-
-  // Check against existing provisionals — reinforce or promote if matched
-  const provisionals = entries.filter((e) => e.category === "provisional");
-  if (provisionals.length > 0) {
-    const provCandidates = await preFilterCandidates(text, provisionals);
-    const provResult = await coalesce(text, provCandidates);
-    if (
-      (provResult.action === "skip" || provResult.action === "merge") &&
-      typeof provResult.index === "number" &&
-      provCandidates[provResult.index]
-    ) {
-      const target = provCandidates[provResult.index];
-      const mergedText = provResult.action === "merge" ? provResult.merged : target.text;
+    if (result.action === "merge" && typeof result.index === "number" && candidates[result.index]) {
+      const target = candidates[result.index];
       const actualIndex = entries.findIndex((e) => e.id === target.id);
       if (actualIndex !== -1) {
-        if (target.reinforcedAt) {
-          // Third sighting — promote to permanent fact
-          entries[actualIndex] = {
-            ...entries[actualIndex],
-            text: mergedText,
-            category: "fact",
-            confidence: 1.0,
-            lifespan: "permanent",
-            expiresAt: null,
-            embedded: false,
-            updatedAt: new Date().toISOString(),
-          };
-          save(entries);
-          console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_promoted", id: target.id, person, text: mergedText.slice(0, 80) }));
-          return { action: "promoted" };
-        } else {
-          // Second sighting — reinforce, refresh TTL, don't promote yet
-          const now = new Date();
-          entries[actualIndex] = {
-            ...entries[actualIndex],
-            text: mergedText,
-            confidence: 0.6,
-            addedAt: now.toISOString(),
-            reinforcedAt: now.toISOString(),
-            expiresAt: new Date(now.getTime() + PROVISIONAL_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString(),
-            embedded: false,
-            updatedAt: now.toISOString(),
-          };
-          save(entries);
-          console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_reinforced", id: target.id, person, text: mergedText.slice(0, 80) }));
-          return { action: "reinforced" };
-        }
+        entries[actualIndex] = {
+          ...entries[actualIndex],
+          text: result.merged,
+          embedded: false,
+          updatedAt: new Date().toISOString(),
+        };
+        save(entries);
+        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "implicit_merged", id: target.id, person, text: result.merged.slice(0, 80) }));
+        return { action: "known" };
       }
     }
   }
 
-  // New — store as provisional
+  // New — store as memory
   const now = new Date();
   const temporalExpiry = detectTemporalExpiry(text, now);
-  const defaultExpiry = new Date(now.getTime() + PROVISIONAL_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
   entries.push({
     id: makeId(),
     text,
     person,
-    category: "provisional",
-    confidence: temporalExpiry ? 1.0 : 0.6,
+    category: "memory",
+    confidence: 1.0,
     source,
-    lifespan: temporalExpiry ? "temporary" : "long-lived",
-    expiresAt: temporalExpiry ?? defaultExpiry,
+    expiresAt: temporalExpiry ?? null,
     scope: "global",
     embedded: false,
+    lastAccessedAt: null,
     addedBy: "bot",
     addedAt: now.toISOString(),
     updatedAt: null,
   });
   save(entries);
   recentExtractions.push({ text, person, addedAt: Date.now() });
-  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category: "provisional", person, source, expiresAt: temporalExpiry, text: text.slice(0, 80) }));
-  console.log(JSON.stringify({ ts: now.toISOString(), stage: "implicit_added", person, confidence: temporalExpiry ? 1.0 : 0.6, expiresAt: temporalExpiry ?? defaultExpiry, text: text.slice(0, 80) }));
+  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "memory_temporal", category: "memory", person, source, expiresAt: temporalExpiry, text: text.slice(0, 80) }));
+  console.log(JSON.stringify({ ts: now.toISOString(), stage: "implicit_added", person, expiresAt: temporalExpiry ?? null, text: text.slice(0, 80) }));
   return { action: "added", temporal: !!temporalExpiry };
 }
 
-/**
- * Store a user-asserted fact as provisional with confidence 0.7.
- * Follows the same promotion pipeline as addImplicit — matches existing
- * facts (skip) or provisionals (promote), otherwise stores as provisional.
- * Returns { action: 'known' | 'promoted' | 'added' }
- */
-export async function addUserAsserted(text, addedBy = "unknown") {
-  const entries = load();
-
-  // Extract person from the text
-  const parts = await splitOrClassify(text);
-  const person = parts[0]?.person ?? null;
-
-  const facts = entries.filter((e) => e.category === "fact");
-  if (facts.length > 0) {
-    const factCandidates = await preFilterCandidates(text, facts);
-    const factResult = await coalesce(text, factCandidates);
-    if (factResult.action === "skip" || factResult.action === "merge") {
-      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "user_asserted_skip", reason: "known_fact", addedBy, person, text: text.slice(0, 80) }));
-      return { action: "known" };
-    }
-  }
-
-  const provisionals = entries.filter((e) => e.category === "provisional");
-  if (provisionals.length > 0) {
-    const provCandidates = await preFilterCandidates(text, provisionals);
-    const provResult = await coalesce(text, provCandidates);
-    if (
-      (provResult.action === "skip" || provResult.action === "merge") &&
-      typeof provResult.index === "number" &&
-      provCandidates[provResult.index]
-    ) {
-      const target = provCandidates[provResult.index];
-      const promotedText = provResult.action === "merge" ? provResult.merged : target.text;
-      const actualIndex = entries.findIndex((e) => e.id === target.id);
-      if (actualIndex !== -1) {
-        entries[actualIndex] = {
-          ...entries[actualIndex],
-          text: promotedText,
-          person: person ?? entries[actualIndex].person,
-          category: "fact",
-          confidence: 1.0,
-          lifespan: "permanent",
-          expiresAt: null,
-          embedded: false,
-          updatedAt: new Date().toISOString(),
-        };
-        save(entries);
-        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "user_asserted_promoted", id: target.id, addedBy, person, text: promotedText.slice(0, 80) }));
-        return { action: "promoted" };
-      }
-    }
-  }
-
-  const now = new Date();
-  const temporalExpiry = detectTemporalExpiry(text, now);
-  const defaultExpiry = new Date(now.getTime() + PROVISIONAL_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  entries.push({
-    id: makeId(),
-    text,
-    person,
-    category: "provisional",
-    confidence: temporalExpiry ? 1.0 : 0.7,
-    source: "user-asserted",
-    lifespan: temporalExpiry ? "temporary" : "long-lived",
-    expiresAt: temporalExpiry ?? defaultExpiry,
-    scope: "global",
-    embedded: false,
-    addedBy,
-    addedAt: now.toISOString(),
-    updatedAt: null,
-  });
-  save(entries);
-  if (temporalExpiry) console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_temporal", category: "provisional", person, source: "user-asserted", expiresAt: temporalExpiry, text: text.slice(0, 80) }));
-  console.log(JSON.stringify({ ts: now.toISOString(), stage: "user_asserted_added", addedBy, person, confidence: temporalExpiry ? 1.0 : 0.7, expiresAt: temporalExpiry ?? defaultExpiry, text: text.slice(0, 80) }));
-  return { action: "added", temporal: !!temporalExpiry };
-}

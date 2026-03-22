@@ -12,7 +12,8 @@ matt-bot/
 │   ├── rag/
 │   │   ├── retrieve.js      # Query enrichment, dual-index vector search, keyword search, reranking
 │   │   ├── generate.js      # System prompt builder + OpenAI generation
-│   │   ├── lore-store.js    # Persistent memory — facts, directives, implicit extraction, decay
+│   │   ├── lore-store.js    # Persistent memory — memory/directive model, salience scoring, entity profiles
+│   │   ├── url-reader.js    # Fetch a URL, extract text, chunk + extract facts via gpt-4o-mini
 │   │   ├── discord-log.js   # Logs real Matt messages from Discord for ongoing learning
 │   │   ├── crypto-utils.js  # AES-256-GCM encryption/decryption
 │   │   ├── index.js         # Startup: build Vectra vector indexes (if missing)
@@ -42,18 +43,31 @@ matt-bot/
 @MattBot message in Discord
   → bot.js fetches recent channel messages for context
   → retrieve.js: enrich query (gpt-4o-mini) → embed → dual vector search → keyword search → rerank
-  → lore-store.js: retrieve relevant facts, directives, soft observations
+  → lore-store.js: retrieve memories + directives; entity profile if query names a person
+    salience = semantic_similarity * 0.7 + access_recency * 0.3
   → discord-log.js: retrieve recent real Matt messages from this server
-  → generate.js: assemble system prompt (persona + examples + lore + context) → generate (gpt-4o)
+  → generate.js: assemble system prompt (persona + examples + memories + context) → generate (gpt-4o)
   → bot.js posts reply
 
 Implicit memory:
   → bot.js extracts facts from conversation via lore-store.js extractImplicit()
-  → New facts start as "provisional" (confidence 0.3, 90-day TTL)
-  → Second sighting → reinforced (confidence 0.6, TTL refreshed)
-  → Third sighting → promoted to permanent fact (confidence 1.0)
+  → Dedup check via coalesce() → writes directly to memory (no staging pipeline)
+  → Bot posts a conversational acknowledgment in gweeod when it notes something new
   → Passive observation: bot extracts from non-gweeod channels every 5 messages
 ```
+
+## Memory Model
+
+Two categories: `memory` and `directive`.
+
+- **memory** — everything the bot knows: personal facts, episodic details, URL-extracted knowledge
+  - Permanent by default; `expiresAt` set for time-sensitive things ("for now", "tonight", etc.)
+  - `source: "url-import"` memories are injected as background context ("inform your take, don't recite it")
+  - `lastAccessedAt` tracked — salience blends semantic score + access recency
+  - Bot-inferred memories never accessed after 180 days are pruned at startup
+- **directive** — behavioral rules set by admins; always injected, never pruned
+
+Entity profiles: when a query names a person (Reed, Dave, etc.), all memories tagged with that person are pulled as a consolidated block and injected separately from general memory retrieval.
 
 ## Key Environment Variables
 
@@ -104,10 +118,12 @@ cd tools && npm run pipeline
 
 | Command | Description |
 |---------|-------------|
-| `!remember <fact>` | Store a fact about someone |
-| `!forget <id>` | Remove a stored fact |
-| `!lore` | List all stored facts and directives |
-| `!directive <rule>` | Add a behavioral rule the bot must follow |
+| `remember: <fact>` | Store a memory (trusted users: permanent; others: goes through addLore) |
+| `remember for now: <fact>` | Store a memory with 7-day expiry |
+| `forget: <id>` | Remove a stored memory |
+| `list memory` | List all stored memories and directives |
+| `directive: <rule>` | Add a behavioral rule the bot must follow (admin only) |
+| `read: <url>` | Fetch a URL, extract facts, store as background knowledge (admin only) |
 
 ## Sessions
 

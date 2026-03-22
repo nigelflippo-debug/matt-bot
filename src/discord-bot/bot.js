@@ -12,7 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
-import { addLore, removeLore, getAllLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, applyDecay, extractImplicit, addImplicit, addUserAsserted, attributePersons, deduplicateLore } from "../rag/lore-store.js";
+import { addLore, removeLore, getAllLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, pruneStale, extractImplicit, addImplicit, attributePersons, deduplicateLore } from "../rag/lore-store.js";
 import { logMattMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 import { loadEncryptedText } from "../rag/crypto-utils.js";
 import { readUrl } from "../rag/url-reader.js";
@@ -134,11 +134,6 @@ const NOTED_TEMPLATES = [
   (f) => `filing that away — ${f}`,
 ];
 
-const PROMOTED_TEMPLATES = [
-  (f) => `locking that in — ${f}`,
-  (f) => `ok yeah locking that in — ${f}`,
-  (f) => `that's confirmed now — ${f}`,
-];
 
 function pickTemplate(templates, fact) {
   return templates[Math.floor(Math.random() * templates.length)](fact);
@@ -148,38 +143,26 @@ async function runImplicitExtraction(conversationContext, requestId, message, no
   try {
     const facts = await extractImplicit(conversationContext);
     log(requestId, "implicit_extract", { found: facts.length, facts: facts.map((f) => f.text.slice(0, 60)) });
-    let anyProvisional = false;
-    let anyPromoted = false;
-    let anyReinforced = false;
+    let anyNew = false;
     let anyTemporal = false;
     const newFacts = [];
-    const promotedFacts = [];
     for (const fact of facts) {
       const result = await addImplicit(fact.text, "bot-inferred", fact.person);
       log(requestId, "implicit_store", { fact: fact.text.slice(0, 60), person: fact.person, action: result.action });
-      if (result.action === "added") { anyProvisional = true; newFacts.push(fact.text); }
-      if (result.action === "promoted") { anyPromoted = true; promotedFacts.push(fact.text); }
-      if (result.action === "reinforced") anyReinforced = true;
+      if (result.action === "added") { anyNew = true; newFacts.push(fact.text); }
       if (result.temporal) anyTemporal = true;
     }
-    if (anyPromoted) await message.react("🧠").catch(() => {});
-    if (anyReinforced) await message.react("🔄").catch(() => {});
-    if (anyProvisional) await message.react("🤔").catch(() => {});
+    if (anyNew) await message.react("🧠").catch(() => {});
     if (anyTemporal) await message.react("📅").catch(() => {});
 
-    if (notify) {
-      const lines = [];
+    if (notify && newFacts.length > 0) {
+      let line;
       if (newFacts.length === 1) {
-        lines.push(pickTemplate(NOTED_TEMPLATES, newFacts[0]));
-      } else if (newFacts.length > 1) {
-        lines.push(`noted a few things btw:\n${newFacts.map((f) => `- ${f}`).join("\n")}`);
+        line = pickTemplate(NOTED_TEMPLATES, newFacts[0]);
+      } else {
+        line = `noted a few things btw:\n${newFacts.map((f) => `- ${f}`).join("\n")}`;
       }
-      for (const f of promotedFacts) {
-        lines.push(pickTemplate(PROMOTED_TEMPLATES, f));
-      }
-      for (const line of lines) {
-        await message.channel.send(line).catch(() => {});
-      }
+      await message.channel.send(line).catch(() => {});
     }
   } catch (err) {
     log(requestId, "implicit_error", { message: err.message });
@@ -221,15 +204,14 @@ async function runInjection() {
     ]);
     trackExamples(results.map((r) => r.id));
 
-    const [retrievedFacts, directives, discordExamples] = await Promise.all([
+    const [loreResult, directives, discordExamples] = await Promise.all([
       retrieveLore(INJECTION_SEED, 8),
       Promise.resolve(getDirectives()),
       retrieveDiscord(INJECTION_SEED, 3),
     ]);
-    const confirmedFacts = retrievedFacts.filter((f) => f.category !== "provisional");
-    const softFacts = retrievedFacts.filter((f) => f.category === "provisional" && f.confidence >= 0.4);
+    const { memories: retrievedMemories, personProfile } = loreResult;
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, [], confirmedFacts, directives, discordExamples, softFacts);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, [], retrievedMemories, directives, discordExamples, personProfile);
     const message = await generate(systemPrompt, [], INJECTION_SEED);
 
     for (const ch of channels) {
@@ -252,8 +234,8 @@ function scheduleInjection() {
 
 client.once(Events.ClientReady, async (c) => {
   const pruned = pruneExpired();
-  const decay = applyDecay();
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag, prunedLore: pruned, decayed: decay.decayed, decayPruned: decay.pruned }));
+  const stale = pruneStale();
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag, prunedExpired: pruned, prunedStale: stale }));
   // Attribute person names to existing entries that predate person tagging — no-op after first run
   attributePersons().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_error", message: err.message })));
   // Deduplicate legacy lore entries — no-op once store is clean
@@ -327,30 +309,30 @@ client.on(Events.MessageCreate, async (message) => {
     const fact = rememberMatch[1].trim();
 
     if (rememberIsEpisodic) {
-      // "remember for now:" — episodic for everyone
+      // "remember for now:" — memory with temporal expiry
       const result = await addLore(`for now: ${fact}`, senderName);
-      log(requestId, "lore_write", { fact, addedBy: senderName, action: result.action, path: "episodic" });
+      log(requestId, "memory_write", { fact, addedBy: senderName, action: result.action, path: "temporary" });
       const acks = {
-        added:   `Got it. I'll remember that for now (expires in 7 days).`,
+        added:   `Got it. I'll remember that for now.`,
         merged:  `Yeah I already kind of knew that, updated.`,
         skipped: `I already know that.`,
-        split:   `Got it. I split that into a fact and a rule.`,
+        split:   `Got it. I split that into a memory and a rule.`,
       };
       await message.reply(acks[result.action] ?? `Got it.`);
       const reacts = { added: "⏳", merged: "✏️", skipped: "👍", split: "✂️" };
       const emoji = reacts[result.action];
       if (emoji) await message.react(emoji).catch(() => {});
       if (result.temporal) await message.react("📅").catch(() => {});
-    } else if (isTrusted) {
-      // "remember:" from admin or trusted user — permanent
+    } else {
+      // "remember:" from any user — permanent memory
       const result = await addLore(fact, senderName);
-      log(requestId, "lore_write", { fact, addedBy: senderName, action: result.action, path: "permanent" });
+      log(requestId, "memory_write", { fact, addedBy: senderName, action: result.action, path: "permanent", trusted: isTrusted });
       const acks = {
-        added:   `Got it. I'll remember that.`,
+        added:   isTrusted ? `Got it. I'll remember that.` : `noted`,
         merged:  `Yeah I already kind of knew that, updated.`,
         skipped: `I already know that.`,
         capped:  `My brain is full. Someone needs to forget something first.`,
-        split:   `Got it. I split that into a fact and a rule.`,
+        split:   `Got it. I split that into a memory and a rule.`,
       };
       await message.reply(acks[result.action] ?? `Got it.`);
       const reacts = {
@@ -359,20 +341,6 @@ client.on(Events.MessageCreate, async (message) => {
         skipped: "👍",
         split:   "✂️",
       };
-      const emoji = reacts[result.action];
-      if (emoji) await message.react(emoji).catch(() => {});
-      if (result.temporal) await message.react("📅").catch(() => {});
-    } else {
-      // "remember:" from non-trusted user — provisional, confidence 0.3
-      const result = await addUserAsserted(fact, senderName);
-      log(requestId, "lore_write", { fact, addedBy: senderName, action: result.action, path: "provisional" });
-      const acks = {
-        added:    `noted`,
-        promoted: `yeah actually that checks out`,
-        known:    `I already know that`,
-      };
-      await message.reply(acks[result.action] ?? `noted`);
-      const reacts = { added: "🤔", promoted: "🧠" };
       const emoji = reacts[result.action];
       if (emoji) await message.react(emoji).catch(() => {});
       if (result.temporal) await message.react("📅").catch(() => {});
@@ -556,17 +524,14 @@ client.on(Events.MessageCreate, async (message) => {
       ms: t2 - t1,
     });
 
-    // Retrieve relevant facts + directives + discord examples
-    const [retrievedFacts, directives, discordExamples] = await Promise.all([
+    // Retrieve relevant memories + directives + discord examples
+    const [loreResult, directives, discordExamples] = await Promise.all([
       retrieveLore(retrievalQuery, 8),
       Promise.resolve(getDirectives()),
       retrieveDiscord(retrievalQuery, 3),
     ]);
-    // Confirmed facts: non-provisional, treat as ground truth
-    // Soft facts: provisional with confidence >= 0.5 (user-asserted), inject with weaker framing
-    const confirmedFacts = retrievedFacts.filter((f) => f.category !== "provisional");
-    const softFacts = retrievedFacts.filter((f) => f.category === "provisional" && f.confidence >= 0.4);
-    log(requestId, "lore_retrieved", { facts: confirmedFacts.length, soft: softFacts.length, provisional_excluded: retrievedFacts.length - confirmedFacts.length - softFacts.length, directives: directives.length, discordExamples: discordExamples.length });
+    const { memories: retrievedMemories, personProfile } = loreResult;
+    log(requestId, "memory_retrieved", { memories: retrievedMemories.length, profile: personProfile?.person ?? null, directives: directives.length, discordExamples: discordExamples.length });
 
     // Extract the last few Matt replies to discourage repetition
     const recentBotReplies = history
@@ -574,7 +539,7 @@ client.on(Events.MessageCreate, async (message) => {
       .slice(-3)
       .map((m) => m.content);
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, confirmedFacts, directives, discordExamples, softFacts);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, retrievedMemories, directives, discordExamples, personProfile);
 
     log(requestId, "generating");
     const t3 = Date.now();
@@ -611,7 +576,8 @@ client.on(Events.MessageCreate, async (message) => {
     if (debugMode) {
       const debugData = {
         directives: directives.map((e) => e.text),
-        lore_facts: retrievedFacts.map((e) => e.text),
+        memories: retrievedMemories.map((e) => e.text),
+        person_profile: personProfile ? { person: personProfile.person, memories: personProfile.memories.map((e) => e.text) } : null,
         corpus_windows: loreWindows.map((w) => w.text),
         discord_examples: discordExamples.map((e) => e.response),
         rag_examples: results.map((r) => r.response),

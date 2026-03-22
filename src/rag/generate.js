@@ -30,7 +30,7 @@ function formatExamples(results) {
  * Inserts before "## Final Instruction" so the static examples and retrieved
  * examples are both present.
  */
-export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], retrievedFacts = [], directives = [], discordExamples = [], softFacts = []) {
+export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], retrievedMemories = [], directives = [], discordExamples = [], personProfile = null) {
   let injection = "";
 
   // Directives: behavioral rules the group has set — always inject.
@@ -109,44 +109,45 @@ Vary your move. If you used a short quip last time, try a different angle this t
 `;
   }
 
-  // Facts injected last (before Final Instruction) for maximum model attention.
-  // Split personal facts from wiki/url-imported background knowledge — they need different framing.
-  const personalFacts = retrievedFacts.filter((e) => e.source !== "url-import");
-  const backgroundFacts = retrievedFacts.filter((e) => e.source === "url-import");
+  // Memory injected last (before Final Instruction) for maximum model attention.
+  // Entity profile: if a specific person was queried, inject all their memories first.
+  if (personProfile) {
+    const profileText = personProfile.memories.map((e) => `- ${e.text}`).join("\n");
+    injection += `## What you know about ${personProfile.person}
 
-  if (personalFacts.length > 0) {
-    const factText = personalFacts.map((e) => `- ${e.text}`).join("\n");
-    injection += `## Things you know (use these)
+Everything you remember about them. Use this to ground any references to ${personProfile.person} — don't invent details beyond what's here.
 
-You remember these. They're confirmed facts about your friends and your life. If any are relevant to what someone just said, work them into your response naturally — this is how you show you actually pay attention.
-
-${factText}
+${profileText}
 
 ---
 
 `;
   }
 
-  if (backgroundFacts.length > 0) {
-    const factText = backgroundFacts.map((e) => `- ${e.text}`).join("\n");
+  // General memory: personal memories (non-wiki)
+  const personalMemories = retrievedMemories.filter((e) => e.source !== "url-import");
+  const backgroundMemories = retrievedMemories.filter((e) => e.source === "url-import");
+
+  if (personalMemories.length > 0) {
+    const memoryText = personalMemories.map((e) => `- ${e.text}`).join("\n");
+    injection += `## Things you know (use these)
+
+You remember these. They're confirmed memories about your friends and your life. If any are relevant to what someone just said, work them into your response naturally — this is how you show you actually pay attention.
+
+${memoryText}
+
+---
+
+`;
+  }
+
+  if (backgroundMemories.length > 0) {
+    const bgText = backgroundMemories.map((e) => `- ${e.text}`).join("\n");
     injection += `## Background knowledge (inform your take, don't recite it)
 
 You've read about this stuff. It informs your opinions and reactions but you don't quote it like a wiki — you have takes shaped by it. If it's relevant, let it color what you say, not dictate it.
 
-${factText}
-
----
-
-`;
-  }
-
-  if (softFacts.length > 0) {
-    const softText = softFacts.map((e) => `- ${e.text}`).join("\n");
-    injection += `## Things you've heard
-
-You've picked up on these but aren't 100% sure. You can reference them casually but don't state them as hard fact.
-
-${softText}
+${bgText}
 
 ---
 
