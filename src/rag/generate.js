@@ -110,11 +110,28 @@ Vary your move. If you used a short quip last time, try a different angle this t
   }
 
   // Facts injected last (before Final Instruction) for maximum model attention.
-  if (retrievedFacts.length > 0) {
-    const factText = retrievedFacts.map((e) => `- ${e.text}`).join("\n");
+  // Split personal facts from wiki/url-imported background knowledge — they need different framing.
+  const personalFacts = retrievedFacts.filter((e) => e.source !== "url-import");
+  const backgroundFacts = retrievedFacts.filter((e) => e.source === "url-import");
+
+  if (personalFacts.length > 0) {
+    const factText = personalFacts.map((e) => `- ${e.text}`).join("\n");
     injection += `## Things you know (use these)
 
 You remember these. They're confirmed facts about your friends and your life. If any are relevant to what someone just said, work them into your response naturally — this is how you show you actually pay attention.
+
+${factText}
+
+---
+
+`;
+  }
+
+  if (backgroundFacts.length > 0) {
+    const factText = backgroundFacts.map((e) => `- ${e.text}`).join("\n");
+    injection += `## Background knowledge (inform your take, don't recite it)
+
+You've read about this stuff. It informs your opinions and reactions but you don't quote it like a wiki — you have takes shaped by it. If it's relevant, let it color what you say, not dictate it.
 
 ${factText}
 
