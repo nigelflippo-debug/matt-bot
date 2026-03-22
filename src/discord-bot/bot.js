@@ -126,7 +126,25 @@ const client = new Client({
   ],
 });
 
-async function runImplicitExtraction(conversationContext, requestId, message) {
+const NOTED_TEMPLATES = [
+  (f) => `oh wait — ${f}`,
+  (f) => `noted btw — ${f}`,
+  (f) => `wait, noting that — ${f}`,
+  (f) => `oh, ${f} — noted`,
+  (f) => `filing that away — ${f}`,
+];
+
+const PROMOTED_TEMPLATES = [
+  (f) => `locking that in — ${f}`,
+  (f) => `ok yeah locking that in — ${f}`,
+  (f) => `that's confirmed now — ${f}`,
+];
+
+function pickTemplate(templates, fact) {
+  return templates[Math.floor(Math.random() * templates.length)](fact);
+}
+
+async function runImplicitExtraction(conversationContext, requestId, message, notify = false) {
   try {
     const facts = await extractImplicit(conversationContext);
     log(requestId, "implicit_extract", { found: facts.length, facts: facts.map((f) => f.text.slice(0, 60)) });
@@ -134,11 +152,13 @@ async function runImplicitExtraction(conversationContext, requestId, message) {
     let anyPromoted = false;
     let anyReinforced = false;
     let anyTemporal = false;
+    const newFacts = [];
+    const promotedFacts = [];
     for (const fact of facts) {
       const result = await addImplicit(fact.text, "bot-inferred", fact.person);
       log(requestId, "implicit_store", { fact: fact.text.slice(0, 60), person: fact.person, action: result.action });
-      if (result.action === "added") anyProvisional = true;
-      if (result.action === "promoted") anyPromoted = true;
+      if (result.action === "added") { anyProvisional = true; newFacts.push(fact.text); }
+      if (result.action === "promoted") { anyPromoted = true; promotedFacts.push(fact.text); }
       if (result.action === "reinforced") anyReinforced = true;
       if (result.temporal) anyTemporal = true;
     }
@@ -146,6 +166,21 @@ async function runImplicitExtraction(conversationContext, requestId, message) {
     if (anyReinforced) await message.react("🔄").catch(() => {});
     if (anyProvisional) await message.react("🤔").catch(() => {});
     if (anyTemporal) await message.react("📅").catch(() => {});
+
+    if (notify) {
+      const lines = [];
+      if (newFacts.length === 1) {
+        lines.push(pickTemplate(NOTED_TEMPLATES, newFacts[0]));
+      } else if (newFacts.length > 1) {
+        lines.push(`noted a few things btw:\n${newFacts.map((f) => `- ${f}`).join("\n")}`);
+      }
+      for (const f of promotedFacts) {
+        lines.push(pickTemplate(PROMOTED_TEMPLATES, f));
+      }
+      for (const line of lines) {
+        await message.channel.send(line).catch(() => {});
+      }
+    }
   } catch (err) {
     log(requestId, "implicit_error", { message: err.message });
   }
@@ -252,7 +287,7 @@ client.on(Events.MessageCreate, async (message) => {
         const extractionContext = buf.map(({ name, text }) => `${name}: ${text}`).join("\n");
         const passiveRequestId = `p_${message.id.slice(-6)}`;
         log(passiveRequestId, "passive_extract_trigger", { channel: message.channel.name, messages: buf.length });
-        runImplicitExtraction(extractionContext, passiveRequestId, message).catch(() => {});
+        runImplicitExtraction(extractionContext, passiveRequestId, message, false).catch(() => {});
         embedPendingLore().catch(() => {});
       }
     }
@@ -570,7 +605,7 @@ client.on(Events.MessageCreate, async (message) => {
       const priorContext = priorMessages.slice(-EXTRACTION_MESSAGES).filter(({ botDirected }) => !botDirected).map(({ name, text }) => `${name}: ${text}`);
       const triggerLine = (!isPureQuestion && userMessage.length >= 10) ? [`${senderName}: ${userMessage}`] : [];
       const extractionContext = [...priorContext, ...triggerLine].join("\n");
-      if (extractionContext.trim()) runImplicitExtraction(extractionContext, requestId, message).catch(() => {});
+      if (extractionContext.trim()) runImplicitExtraction(extractionContext, requestId, message, inGweeod).catch(() => {});
     }
 
     if (debugMode) {
