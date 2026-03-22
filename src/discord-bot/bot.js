@@ -67,9 +67,6 @@ const SPAM_THRESHOLD = 3;        // messages before timeout
 const SPAM_TIMEOUT_MS = 60_000;  // 1 minute timeout
 const spamTimestamps = [];
 
-// URL reader cooldown — one URL per user per 5 minutes
-const URL_COOLDOWN_MS = 5 * 60 * 1000;
-const urlCooldowns = new Map(); // userId -> timestamp
 
 const TIMEOUT_LINES = [
   "I am the real Matt. Shut up Matt.",
@@ -398,14 +395,6 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     const url = readMatch[1];
-
-    // Cooldown check
-    const lastRead = urlCooldowns.get(message.author.id) ?? 0;
-    if (Date.now() - lastRead < URL_COOLDOWN_MS) {
-      await message.reply(`Slow down, I'm still digesting the last one.`);
-      return;
-    }
-    urlCooldowns.set(message.author.id, Date.now());
 
     await message.channel.sendTyping();
     const typingInterval = setInterval(() => message.channel.sendTyping(), 8000);
