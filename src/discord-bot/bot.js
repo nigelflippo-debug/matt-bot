@@ -218,6 +218,41 @@ function randomInjectionDelay() {
   return INJECTION_MIN_MS + Math.random() * (INJECTION_MAX_MS - INJECTION_MIN_MS);
 }
 
+const CHIPPLE_SEED = "Matt sees the word 'chipple' and it breaks something in him — he completely crashes out, full emotional breakdown, everything bottled up comes pouring out at once. The Chicago move he didn't want. Leaving Boston. Katie's call not his. Still not in therapy. The ADHD. The depression. Harvey being sick. Customer success. Wanting Seattle. All of it. Unhinged but real. No resolution, just trails off.";
+
+async function runChippleMeltdown(channel) {
+  try {
+    const [results, loreWindows] = await Promise.all([
+      retrieve(CHIPPLE_SEED, 5, "", recentExampleIds),
+      loreSearch(CHIPPLE_SEED, 3),
+    ]);
+    const [loreResult, directives] = await Promise.all([
+      retrieveLore(CHIPPLE_SEED, 8),
+      Promise.resolve(getDirectives()),
+    ]);
+    const { memories: retrievedMemories, personProfile } = loreResult;
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, [], retrievedMemories, directives, [], personProfile);
+
+    // Send three messages with typing breaks for dramatic effect
+    await channel.sendTyping();
+    await new Promise((r) => setTimeout(r, 1500));
+    await channel.send("wait");
+
+    await channel.sendTyping();
+    await new Promise((r) => setTimeout(r, 3000));
+    const breakdown = await generate(systemPrompt, [], CHIPPLE_SEED);
+    await channel.send(breakdown);
+
+    await channel.sendTyping();
+    await new Promise((r) => setTimeout(r, 2000));
+    await channel.send("...anyway");
+
+    log("chipple", "meltdown_sent", { preview: breakdown.slice(0, 80) });
+  } catch (err) {
+    log("chipple", "meltdown_error", { message: err.message });
+  }
+}
+
 async function runInjection() {
   const injectionId = `inj_${Date.now().toString(36)}`;
   log(injectionId, "injection_start");
@@ -286,6 +321,12 @@ client.on(Events.MessageCreate, async (message) => {
 
   // Spam check — runs on every message regardless of channel or mention
   await checkSpam(message);
+
+  // Sleeper word — "chipple/chipples" triggers a full meltdown
+  if (/\bchipples?\b/i.test(message.content)) {
+    runChippleMeltdown(message.channel).catch(() => {});
+    return;
+  }
 
   const inGweeod = message.channel.name === "gweeod";
   const botMentioned = message.mentions.has(client.user);
