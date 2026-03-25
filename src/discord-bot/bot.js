@@ -96,7 +96,7 @@ const REMEMBER_BACKOFF = [
 ];
 
 // Home channel response rate — don't respond to every unprompted message
-const HOME_CHANNEL_RESPONSE_CHANCE = 0.75;
+const HOME_CHANNEL_RESPONSE_CHANCE = 0.9;
 
 // Bot cross-talk — allow occasional bot-to-bot exchanges in the home channel,
 // but cap at one consecutive bot-to-bot reply to prevent loops.
