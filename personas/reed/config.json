@@ -1,0 +1,9 @@
+{
+  "id": "reed",
+  "name": "Reed",
+  "senderNames": ["Reed Zacharias"],
+  "nameVariants": ["reed", "zacharias"],
+  "discordUserIdEnv": "REED_DISCORD_USER_ID",
+  "homeChannel": "gweeod",
+  "specialBehaviors": {}
+}
