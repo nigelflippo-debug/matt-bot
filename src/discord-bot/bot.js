@@ -103,11 +103,14 @@ const REMEMBER_BACKOFF = mp?.backoff ?? DEFAULT_REMEMBER_BACKOFF;
 // Home channel response rate — don't respond to every unprompted message
 const HOME_CHANNEL_RESPONSE_CHANCE = 0.9;
 
-// Bot cross-talk — allow occasional bot-to-bot exchanges in the home channel,
-// cap at BOT_CHAIN_MAX consecutive bot-to-bot replies to prevent infinite loops.
-const BOT_RESPONSE_CHANCE = 0.5;
-const BOT_CHAIN_MAX = 3;
-const botExchangeCount = new Map(); // channelId → consecutive bot reply count
+// Bot cross-talk — allow occasional bot-to-bot exchanges in the home channel.
+// After an exchange, require BOT_COOLDOWN_MESSAGES human messages before bots
+// can talk to each other again. Cap chains at BOT_CHAIN_MAX consecutive replies.
+const BOT_RESPONSE_CHANCE = 0.2;
+const BOT_CHAIN_MAX = 2;
+const BOT_COOLDOWN_MESSAGES = 3;
+const botExchangeCount = new Map();  // channelId → consecutive bot reply count
+const botCooldownCount = new Map();  // channelId → human messages since last bot exchange
 
 // Aggression state — per-channel tracking of provocation-triggered aggressive mode
 const aggressionState = new Map(); // channelId → {topic, remainingReplies}
@@ -394,12 +397,15 @@ client.on(Events.MessageCreate, async (message) => {
     if (message.channel.name !== persona.homeChannel) return;
     // In home channel: cap at BOT_CHAIN_MAX consecutive bot-to-bot exchanges
     if ((botExchangeCount.get(message.channel.id) ?? 0) >= BOT_CHAIN_MAX) return;
-    // 25% chance to respond to a bot message
+    // Cooldown: require BOT_COOLDOWN_MESSAGES human messages since last bot exchange
+    if ((botCooldownCount.get(message.channel.id) ?? BOT_COOLDOWN_MESSAGES) < BOT_COOLDOWN_MESSAGES) return;
+    // 20% chance to respond to a bot message
     if (Math.random() >= BOT_RESPONSE_CHANCE) return;
     // Fall through — respond to this bot message
   } else {
-    // Human message — reset bot exchange chain for this channel
+    // Human message — reset bot exchange chain, increment cooldown counter
     botExchangeCount.set(message.channel.id, 0);
+    botCooldownCount.set(message.channel.id, (botCooldownCount.get(message.channel.id) ?? BOT_COOLDOWN_MESSAGES) + 1);
   }
 
   // Spam check — runs on every human message regardless of channel or mention
@@ -728,9 +734,10 @@ client.on(Events.MessageCreate, async (message) => {
     await message.reply(reply);
     log(requestId, "replied");
 
-    // Track consecutive bot-to-bot exchanges for loop cap
+    // Track consecutive bot-to-bot exchanges and reset cooldown
     if (message.author.bot) {
       botExchangeCount.set(message.channel.id, (botExchangeCount.get(message.channel.id) ?? 0) + 1);
+      botCooldownCount.set(message.channel.id, 0);
     }
 
     // Decrement aggression counter after each bot reply
