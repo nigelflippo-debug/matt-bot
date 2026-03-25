@@ -95,6 +95,11 @@ const REMEMBER_BACKOFF = [
   "relax, I'll remember stuff",
 ];
 
+// Bot cross-talk — allow occasional bot-to-bot exchanges in the home channel,
+// but cap at one consecutive bot-to-bot reply to prevent loops.
+const BOT_RESPONSE_CHANCE = 0.25;
+const lastWasBotExchange = new Map(); // channelId → bool
+
 // Aggression state — per-channel tracking of provocation-triggered aggressive mode
 const aggressionState = new Map(); // channelId → {topic, remainingReplies}
 
@@ -347,11 +352,23 @@ client.once(Events.ClientReady, async (c) => {
 });
 
 client.on(Events.MessageCreate, async (message) => {
-  // Ignore messages from bots (including ourselves)
-  if (message.author.bot) return;
+  if (message.author.bot) {
+    // Never respond to ourselves
+    if (message.author.id === client.user?.id) return;
+    // Outside home channel: ignore all bots
+    if (message.channel.name !== persona.homeChannel) return;
+    // In home channel: cap at 1 consecutive bot-to-bot exchange to prevent loops
+    if (lastWasBotExchange.get(message.channel.id)) return;
+    // 25% chance to respond to a bot message
+    if (Math.random() >= BOT_RESPONSE_CHANCE) return;
+    // Fall through — respond to this bot message
+  } else {
+    // Human message — reset bot exchange chain for this channel
+    lastWasBotExchange.set(message.channel.id, false);
+  }
 
-  // Spam check — runs on every message regardless of channel or mention
-  await checkSpam(message);
+  // Spam check — runs on every human message regardless of channel or mention
+  if (!message.author.bot) await checkSpam(message);
 
   // Sleeper word — "chipple/chipples" triggers a full meltdown (persona-specific)
   if (chippleConfig.enabled && /\bchipples?\b/i.test(message.content)) {
@@ -667,6 +684,12 @@ client.on(Events.MessageCreate, async (message) => {
     clearInterval(typingInterval);
     await message.reply(reply);
     log(requestId, "replied");
+
+    // If we just replied to a bot, mark this channel as having had a bot exchange
+    // so the next bot message in this channel is ignored (loop cap)
+    if (message.author.bot) {
+      lastWasBotExchange.set(message.channel.id, true);
+    }
 
     // Decrement aggression counter after each bot reply
     if (aggression) decrementAggression(message.channel.id);
