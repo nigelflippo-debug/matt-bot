@@ -8,10 +8,12 @@
 
 import fs from "fs";
 import { loadEncryptedJson } from "./crypto-utils.js";
+import { getPersona } from "../persona/loader.js";
 
-const seedEncPath = "/app/data-src/lore.enc";
-const seedJsonPath = "/app/data-src/lore.json";
-const livePath = "/app/data/lore.json";
+const persona = getPersona();
+const seedEncPath = persona.paths.seedLoreEnc ?? "";
+const seedJsonPath = persona.paths.seedLoreJson ?? "";
+const livePath = persona.paths.loreJson;
 
 if (!fs.existsSync(seedEncPath) && !fs.existsSync(seedJsonPath)) {
   console.log("merge-lore: no seed file, skipping");

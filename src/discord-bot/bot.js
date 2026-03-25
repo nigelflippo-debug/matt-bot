@@ -1,28 +1,26 @@
 /**
- * bot.js — Matt Bot Discord bot
+ * bot.js — Persona Bot Discord bot
  *
- * Responds as Matt when mentioned in a Discord channel.
+ * Responds as the configured persona when mentioned in a Discord channel.
  * Uses the simple pipeline: light retrieval (K=5) + lore-heavy system prompt.
  */
 
 import "dotenv/config";
 import { Client, Events, GatewayIntentBits, MessageFlags } from "discord.js";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import { retrieve, loreSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
 import { addLore, removeLore, getAllLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, pruneStale, extractImplicit, addImplicit, attributePersons, deduplicateLore } from "../rag/lore-store.js";
-import { logMattMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
+import { logPersonaMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 import { loadEncryptedText } from "../rag/crypto-utils.js";
 import { readUrl } from "../rag/url-reader.js";
 import { classifyAggression } from "../rag/aggression.js";
+import { getPersona } from "../persona/loader.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const persona = getPersona();
 
 const baseSystemPrompt = loadEncryptedText(
-  path.resolve(__dirname, "../persona/system-prompt.enc"),
-  path.resolve(__dirname, "../persona/system-prompt.md"),
+  persona.systemPromptEnc,
+  persona.systemPromptMd,
 );
 
 // How many recent messages to fetch total
@@ -30,7 +28,7 @@ const FETCH_MESSAGES = 8;
 // How many prior messages to pass to implicit extraction
 const EXTRACTION_MESSAGES = 7;
 
-// Passive observation — extract from non-gweeod channels without being mentioned
+// Passive observation — extract from non-home channels without being mentioned
 const PASSIVE_BUFFER_SIZE = 5;
 const PASSIVE_MIN_LENGTH = 15;
 const passiveBuffers = new Map(); // channelId -> [{name, text}]
@@ -235,24 +233,19 @@ function log(requestId, stage, data = {}) {
   console.log(JSON.stringify(entry));
 }
 
-const INJECTION_SEED = "Matt aggressively asks who wants to game";
-const INJECTION_MIN_MS = 4 * 60 * 60 * 1000;  // 4 hours
-const INJECTION_MAX_MS = 8 * 60 * 60 * 1000;  // 8 hours
+const injectionConfig = persona.specialBehaviors.injection ?? {};
+const INJECTION_SEED = injectionConfig.seed ?? "";
+const INJECTION_MIN_MS = injectionConfig.minMs ?? 4 * 60 * 60 * 1000;
+const INJECTION_MAX_MS = injectionConfig.maxMs ?? 8 * 60 * 60 * 1000;
 
 function randomInjectionDelay() {
   return INJECTION_MIN_MS + Math.random() * (INJECTION_MAX_MS - INJECTION_MIN_MS);
 }
 
-const CHIPPLE_SEEDS = [
-  "Matt sees the word 'chipple' and it breaks something in him — he completely crashes out, full emotional breakdown, everything bottled up comes pouring out at once. The Chicago move he didn't want. Leaving Boston. Katie's call not his. Still not in therapy. The ADHD. The depression. Harvey being sick. Customer success. Wanting Seattle. All of it. Unhinged but real. No resolution, just trails off.",
-  "Matt sees 'chipple' and it hits him like a truck — but this time it's rage. Pure, directionless anger. He's mad at himself, mad at the word, mad that it still gets to him. He starts ranting about something specific — could be work, could be the move, could be something from years ago — and it spirals. He's not sad, he's furious. Trails off mid-sentence like he caught himself.",
-  "Matt sees 'chipple' and goes quiet for a second, then starts talking about something weirdly specific and mundane — a thing Katie said last week, something about the cats, a random memory from college — but there's this undercurrent of sadness running through it. He's not breaking down, he's just... leaking. Like he can't hold it all in and it's coming out sideways.",
-  "Matt sees 'chipple' and it triggers a full existential spiral. He starts questioning everything — why he's in customer success, why he never went to therapy, why he let Katie make the Chicago call, whether any of it matters. It gets philosophical in a messy, unpolished way. Not deep thoughts — just a guy staring into the void and narrating what he sees. No resolution.",
-  "Matt sees 'chipple' and snaps into a manic, stream-of-consciousness rant. He's jumping between topics — Harvey's vet bills, his Adderall prescription, that time in Vermont, the guys not gaming enough, his sister's wedding — none of it connects but all of it is real. He's talking fast and can't stop. It's not a breakdown, it's an overflow.",
-];
-
-const CHIPPLE_OPENERS = ["wait", "hold on", "oh no", "...", "stop", "don't"];
-const CHIPPLE_CLOSERS = ["...anyway", "forget I said that", "I'm fine", "whatever", "...yeah", "don't worry about it"];
+const chippleConfig = persona.specialBehaviors.chipple ?? {};
+const CHIPPLE_SEEDS = chippleConfig.seeds ?? [];
+const CHIPPLE_OPENERS = chippleConfig.openers ?? [];
+const CHIPPLE_CLOSERS = chippleConfig.closers ?? [];
 
 async function runChippleMeltdown(channel) {
   try {
@@ -262,14 +255,14 @@ async function runChippleMeltdown(channel) {
 
     const [results, loreWindows] = await Promise.all([
       retrieve(seed, 5, "", recentExampleIds),
-      loreSearch(seed, 3),
+      loreSearch(seed, 3, 4, persona.nameVariants),
     ]);
     const [loreResult, directives] = await Promise.all([
       retrieveLore(seed, 8),
       Promise.resolve(getDirectives()),
     ]);
     const { memories: retrievedMemories, personProfile } = loreResult;
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, [], retrievedMemories, directives, [], personProfile);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, [], retrievedMemories, directives, [], personProfile, null, persona.name);
 
     // Send three messages with typing breaks for dramatic effect
     await channel.sendTyping();
@@ -297,19 +290,19 @@ async function runInjection() {
 
   const channels = [];
   for (const guild of client.guilds.cache.values()) {
-    const ch = guild.channels.cache.find((c) => c.name === "gweeod" && c.isTextBased());
+    const ch = guild.channels.cache.find((c) => c.name === persona.homeChannel && c.isTextBased());
     if (ch) channels.push(ch);
   }
 
   if (channels.length === 0) {
-    log(injectionId, "injection_skip", { reason: "no gweeod channel found" });
+    log(injectionId, "injection_skip", { reason: `no ${persona.homeChannel} channel found` });
     return;
   }
 
   try {
     const [results, loreWindows] = await Promise.all([
       retrieve(INJECTION_SEED, 5, "", recentExampleIds),
-      loreSearch(INJECTION_SEED, 3),
+      loreSearch(INJECTION_SEED, 3, 4, persona.nameVariants),
     ]);
     trackExamples(results.map((r) => r.id));
 
@@ -320,7 +313,7 @@ async function runInjection() {
     ]);
     const { memories: retrievedMemories, personProfile } = loreResult;
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, [], retrievedMemories, directives, discordExamples, personProfile);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, [], retrievedMemories, directives, discordExamples, personProfile, null, persona.name);
     const message = await generate(systemPrompt, [], INJECTION_SEED);
 
     for (const ch of channels) {
@@ -350,7 +343,7 @@ client.once(Events.ClientReady, async (c) => {
   // Deduplicate legacy lore entries — no-op once store is clean
   deduplicateLore().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_error", message: err.message })));
 
-  scheduleInjection();
+  if (injectionConfig.enabled) scheduleInjection();
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -360,18 +353,18 @@ client.on(Events.MessageCreate, async (message) => {
   // Spam check — runs on every message regardless of channel or mention
   await checkSpam(message);
 
-  // Sleeper word — "chipple/chipples" triggers a full meltdown
-  if (/\bchipples?\b/i.test(message.content)) {
+  // Sleeper word — "chipple/chipples" triggers a full meltdown (persona-specific)
+  if (chippleConfig.enabled && /\bchipples?\b/i.test(message.content)) {
     runChippleMeltdown(message.channel).catch(() => {});
     return;
   }
 
-  const inGweeod = message.channel.name === "gweeod";
+  const inHomeChannel = message.channel.name === persona.homeChannel;
   const botMentioned = message.mentions.has(client.user);
   const onlyOthersMentioned = message.mentions.users.size > 0 && !botMentioned;
 
-  // Passive observation — accumulate messages in non-gweeod channels for extraction
-  if (!inGweeod) {
+  // Passive observation — accumulate messages in non-home channel channels for extraction
+  if (!inHomeChannel) {
     const passiveText = message.content.replace(/<@!?\d+>/g, "").trim();
     if (passiveText.length >= PASSIVE_MIN_LENGTH) {
       const name = message.member?.displayName ?? message.author.username;
@@ -392,8 +385,8 @@ client.on(Events.MessageCreate, async (message) => {
 
   // If someone else is tagged (and not the bot), stay out of it
   if (onlyOthersMentioned) return;
-  // Outside gweeod, only respond when explicitly mentioned
-  if (!inGweeod && !botMentioned) return;
+  // Outside home channel, only respond when explicitly mentioned
+  if (!inHomeChannel && !botMentioned) return;
 
   // Strip the mention(s) from the message text; detect --debug flag
   const rawMessage = message.content.replace(/<@!?\d+>/g, "").trim();
@@ -585,7 +578,7 @@ client.on(Events.MessageCreate, async (message) => {
       .reverse()
       .map((m) => {
         const isBot = m.author.bot;
-        const name = isBot ? "Matt" : m.member?.displayName ?? m.author.username;
+        const name = isBot ? persona.name : m.member?.displayName ?? m.author.username;
         const text = m.content.replace(/<@!?\d+>/g, "").trim();
         const botDirected = m.mentions.has(client.user);
         return { isBot, name, text, botDirected };
@@ -594,14 +587,14 @@ client.on(Events.MessageCreate, async (message) => {
 
     log(requestId, "context_fetched", { priorMessageCount: priorMessages.length });
 
-    // If this is real Matt posting (not the bot, not directed at the bot), log the exchange as training data
-    const mattDiscordId = process.env.MATT_DISCORD_USER_ID;
-    if (mattDiscordId && message.author.id === mattDiscordId && userMessage && !message.mentions.has(client.user)) {
+    // If this is the real person posting (not the bot, not directed at the bot), log the exchange as training data
+    const realPersonDiscordId = persona.discordUserId;
+    if (realPersonDiscordId && message.author.id === realPersonDiscordId && userMessage && !message.mentions.has(client.user)) {
       const contextWindow = priorMessages
         .slice(-3)
         .map(({ name, text }) => `${name}: ${text}`)
         .join("\n");
-      logMattMessage(contextWindow, `Matt: ${userMessage}`);
+      logPersonaMessage(contextWindow, `${persona.name}: ${userMessage}`);
     }
 
     // Short window for retrieval — just enough to resolve references in the current message
@@ -622,7 +615,7 @@ client.on(Events.MessageCreate, async (message) => {
     const t1 = Date.now();
     const [results, loreWindows, aggressionClassification] = await Promise.all([
       retrieve(retrievalQuery, 5, conversationContext, recentExampleIds),
-      loreSearch(retrievalQuery, 3),
+      loreSearch(retrievalQuery, 3, 4, persona.nameVariants),
       classifyAggression(userMessage, conversationContext),
     ]);
     trackExamples(results.map((r) => r.id));
@@ -650,13 +643,13 @@ client.on(Events.MessageCreate, async (message) => {
     const { memories: retrievedMemories, personProfile } = loreResult;
     log(requestId, "memory_retrieved", { memories: retrievedMemories.length, profile: personProfile?.person ?? null, directives: directives.length, discordExamples: discordExamples.length });
 
-    // Extract the last few Matt replies to discourage repetition
+    // Extract the last few bot replies to discourage repetition
     const recentBotReplies = history
       .filter((m) => m.role === "assistant")
       .slice(-3)
       .map((m) => m.content);
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, retrievedMemories, directives, discordExamples, personProfile, aggression);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, retrievedMemories, directives, discordExamples, personProfile, aggression, persona.name);
 
     log(requestId, "generating", { aggressive: !!aggression });
     const t3 = Date.now();
@@ -683,15 +676,15 @@ client.on(Events.MessageCreate, async (message) => {
     embedPendingLore().catch(() => {});
     embedPendingDiscord().catch(() => {});
 
-    // Implicit extraction — in gweeod the bot responds to everything so always extract from context.
-    // Outside gweeod, skip short pure questions since they contain no facts.
+    // Implicit extraction — in home channel the bot responds to everything so always extract from context.
+    // Outside home channel, skip short pure questions since they contain no facts.
     const isPureQuestion = userMessage.endsWith("?") && userMessage.length < 60;
-    const shouldExtract = inGweeod || (userMessage.length >= 10 && !isPureQuestion);
+    const shouldExtract = inHomeChannel || (userMessage.length >= 10 && !isPureQuestion);
     if (shouldExtract) {
       const priorContext = priorMessages.slice(-EXTRACTION_MESSAGES).filter(({ isBot, botDirected }) => !isBot && !botDirected).map(({ name, text }) => `${name}: ${text}`);
       const triggerLine = (!isPureQuestion && userMessage.length >= 10) ? [`${senderName}: ${userMessage}`] : [];
       const extractionContext = [...priorContext, ...triggerLine].join("\n");
-      if (extractionContext.trim()) runImplicitExtraction(extractionContext, requestId, message, inGweeod).catch(() => {});
+      if (extractionContext.trim()) runImplicitExtraction(extractionContext, requestId, message, inHomeChannel).catch(() => {});
     }
 
     if (debugMode) {

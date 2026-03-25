@@ -1,0 +1,9 @@
+{
+  "id": "nic",
+  "name": "Nic",
+  "senderNames": ["Nic Dipierro"],
+  "nameVariants": ["nic", "dipierro"],
+  "discordUserIdEnv": "NIC_DISCORD_USER_ID",
+  "homeChannel": "gweeod",
+  "specialBehaviors": {}
+}

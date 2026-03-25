@@ -14,13 +14,12 @@ import "dotenv/config";
 import OpenAI from "openai";
 import { LocalIndex } from "vectra";
 import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+import { getPersona } from "../persona/loader.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const enrichedPath = path.resolve(__dirname, "../../data/enriched.json");
-const pairIndexPath = path.resolve(__dirname, "../../data/index-pair");
-const windowIndexPath = path.resolve(__dirname, "../../data/index-window");
+const persona = getPersona();
+const enrichedPath = persona.paths.enrichedJson;
+const pairIndexPath = persona.paths.indexPair;
+const windowIndexPath = persona.paths.indexWindow;
 
 const BATCH_SIZE = 100;
 

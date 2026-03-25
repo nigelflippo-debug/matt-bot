@@ -23,10 +23,29 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Parse CLI args
+const cliArgs = process.argv.slice(2);
+function getArg(name) {
+  const idx = cliArgs.indexOf(`--${name}`);
+  return idx !== -1 && cliArgs[idx + 1] ? cliArgs[idx + 1] : null;
+}
+
+const personaId = getArg("persona") ?? "matt";
+const senderName = getArg("sender") ?? "Matt Guiod";
+const senderNames = new Set(senderName.split(",").map((s) => s.trim()));
+
 const corpusPath = path.resolve(__dirname, "../data/corpus.json");
-const enrichedPath = path.resolve(__dirname, "../data/enriched.json");
-const pairIndexPath = path.resolve(__dirname, "../data/index-pair");
-const windowIndexPath = path.resolve(__dirname, "../data/index-window");
+const personaDir = path.resolve(__dirname, `../data/personas/${personaId}`);
+const enrichedPath = path.resolve(personaDir, "enriched.json");
+const pairIndexPath = path.resolve(personaDir, "index-pair");
+const windowIndexPath = path.resolve(personaDir, "index-window");
+
+if (!fs.existsSync(personaDir)) fs.mkdirSync(personaDir, { recursive: true });
+
+const isPersona = (msg) => senderNames.has(msg.sender);
+
+console.log(`Pipeline for persona "${personaId}" (senders: ${[...senderNames].join(", ")})`);
 
 const ENRICH_BATCH = 20;   // records per LLM enrichment call
 const EMBED_BATCH = 20;    // records per embedding call (matches enrich batch for pipelining)
@@ -133,17 +152,17 @@ function buildRawRecords(corpus) {
   for (const [chat, messages] of Object.entries(byChat)) {
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
-      if (!msg.isMatt || msg.isMedia) continue;
+      if (!isPersona(msg) || msg.isMedia) continue;
 
       const lookback = messages.slice(Math.max(0, i - 20), i).filter((m) => !m.isMedia);
       const allTurns = groupIntoTurns(lookback);
-      const nonMattTurns = allTurns.filter((t) => t.sender !== "Matt Guiod");
-      const contextTurns = nonMattTurns.slice(-3);
+      const nonPersonaTurns = allTurns.filter((t) => !senderNames.has(t.sender));
+      const contextTurns = nonPersonaTurns.slice(-3);
 
       if (isJunk(msg.text, contextTurns)) { skipped++; continue; }
 
       const inputContext = contextTurns.map(turnToText).join("\n");
-      const response = `Matt: ${msg.text}`;
+      const response = `${msg.sender}: ${msg.text}`;
       const following = messages.slice(i + 1, i + 3).filter((m) => !m.isMedia);
       const windowText = [
         ...allTurns.slice(-3).map(turnToText),

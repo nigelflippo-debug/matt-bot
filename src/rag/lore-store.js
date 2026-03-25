@@ -7,19 +7,18 @@
  *   episodic    — temporary context (expires in 7 days). Retrieved semantically; pruned at startup.
  *   provisional — uncertain/inferred (future: implicit extraction). Not injected into prompts.
  *
- * Written via "@MattBot remember: X" in Discord.
+ * Written via "@Bot remember: X" in Discord.
  */
 
 import "dotenv/config";
 import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import OpenAI from "openai";
 import { LocalIndex } from "vectra";
+import { getPersona } from "../persona/loader.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const lorePath = path.resolve(__dirname, "../../data/lore.json");
-const loreIndexPath = path.resolve(__dirname, "../../data/index-lore");
+const persona = getPersona();
+const lorePath = persona.paths.loreJson;
+const loreIndexPath = persona.paths.indexLore;
 
 const DIRECTIVE_CAP = 20;
 

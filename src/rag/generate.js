@@ -1,5 +1,5 @@
 /**
- * generate.js — generate a Matt-style reply using OpenAI + retrieved examples
+ * generate.js — generate a persona-style reply using OpenAI + retrieved examples
  */
 
 import "dotenv/config";
@@ -11,7 +11,7 @@ const MODEL = process.env.OPENAI_MODEL || "gpt-4o";
 
 /**
  * Format retrieved examples into a block to inject into the system prompt.
- * Includes inputContext (what Matt was replying to) when available so the
+ * Includes inputContext (what the persona was replying to) when available so the
  * model can judge how the example maps to the current situation.
  */
 function formatExamples(results) {
@@ -30,7 +30,7 @@ function formatExamples(results) {
  * Inserts before "## Final Instruction" so the static examples and retrieved
  * examples are both present.
  */
-export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], retrievedMemories = [], directives = [], discordExamples = [], personProfile = null, aggression = null) {
+export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], retrievedMemories = [], directives = [], discordExamples = [], personProfile = null, aggression = null, personaName = "Matt") {
   let injection = "";
 
   // Directives: behavioral rules the group has set — always inject.
@@ -64,11 +64,11 @@ ${loreText}
 `;
   }
 
-  // Style examples: real Matt replies in similar situations (WhatsApp corpus).
+  // Style examples: real persona replies in similar situations (WhatsApp corpus).
   const exampleBlock = formatExamples(results);
-  injection += `## What Matt actually said in similar situations
+  injection += `## What ${personaName} actually said in similar situations
 
-These are real Matt replies. Use his actual words and phrases — authenticity matters. Match his length and energy.
+These are real ${personaName} replies. Use his actual words and phrases — authenticity matters. Match his length and energy.
 
 ${exampleBlock}
 
@@ -85,9 +85,9 @@ ${exampleBlock}
       }
       return response;
     }).join("\n\n");
-    injection += `## What Matt has said in this Discord recently
+    injection += `## What ${personaName} has said in this Discord recently
 
-These are real Matt messages from this exact server. Very high signal — weight these heavily.
+These are real ${personaName} messages from this exact server. Very high signal — weight these heavily.
 
 ${discordBlock}
 

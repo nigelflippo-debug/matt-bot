@@ -10,15 +10,23 @@ data/index-pair/
 data/index-window/
 data/index-lore/
 data/index-discord/
+data/personas/*/index-pair/
+data/personas/*/index-window/
+data/personas/*/index-lore/
+data/personas/*/index-discord/
 
 # Discord conversation pairs — personal data, persisted on Railway volume
 data/discord-pairs.json
+data/personas/*/discord-pairs.json
 
 # Plaintext content — deploy encrypted .enc versions instead
 data/enriched.json
 data/corpus.json
 data/lore.json
+data/personas/*/enriched.json
+data/personas/*/lore.json
 src/persona/system-prompt.md
+personas/*/system-prompt.md
 
 # One-time data mining artifacts (contain personal data, kept locally)
 src/persona/lore-candidates.txt

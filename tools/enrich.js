@@ -1,15 +1,16 @@
 /**
  * enrich.js — build context-response pairs from corpus.json
  *
- * For each Matt message:
+ * For a given persona's messages:
  *   - groups preceding messages into speaker turns
- *   - takes last N non-Matt turns as input context
+ *   - takes last N non-persona turns as input context
  *   - builds window_text (context + reply + following msgs)
  *   - infers heuristic metadata (response_type, length_bucket, etc.)
  *   - filters junk replies
  *   - generates embedding_text via gpt-4o-mini (semantic situation description)
  *
- * Output: data/enriched.json
+ * Usage: node enrich.js --persona matt --sender "Matt Guiod"
+ * Output: data/personas/<id>/enriched.json
  */
 
 import "dotenv/config";
@@ -19,10 +20,31 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const corpusPath = path.resolve(__dirname, "../data/corpus.json");
-const enrichedPath = path.resolve(__dirname, "../data/enriched.json");
 
-const CONTEXT_TURNS = 3;   // max preceding speaker-turns (non-Matt) to include
+// Parse CLI args
+const args = process.argv.slice(2);
+function getArg(name) {
+  const idx = args.indexOf(`--${name}`);
+  return idx !== -1 && args[idx + 1] ? args[idx + 1] : null;
+}
+
+const personaId = getArg("persona") ?? "matt";
+const senderName = getArg("sender") ?? "Matt Guiod";
+const senderNames = new Set(senderName.split(",").map((s) => s.trim()));
+
+const corpusPath = path.resolve(__dirname, "../data/corpus.json");
+const personaDir = path.resolve(__dirname, `../data/personas/${personaId}`);
+const enrichedPath = path.resolve(personaDir, "enriched.json");
+
+// Ensure output directory exists
+if (!fs.existsSync(personaDir)) fs.mkdirSync(personaDir, { recursive: true });
+
+const isPersona = (msg) => senderNames.has(msg.sender);
+
+console.log(`Enriching for persona "${personaId}" (senders: ${[...senderNames].join(", ")})`);
+console.log(`Output: ${enrichedPath}`);
+
+const CONTEXT_TURNS = 3;   // max preceding speaker-turns (non-persona) to include
 const WINDOW_AFTER = 2;    // following messages to include in window_text
 const BATCH_SIZE = 20;      // records per LLM enrichment call
 const LLM_CONCURRENCY = 10; // parallel LLM calls
@@ -106,7 +128,7 @@ let skipped = 0;
 for (const [chat, messages] of Object.entries(byChat)) {
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
-    if (!msg.isMatt || msg.isMedia) continue;
+    if (!isPersona(msg) || msg.isMedia) continue;
 
     // lookback window: up to 20 preceding messages, no media
     const lookback = messages
@@ -115,8 +137,8 @@ for (const [chat, messages] of Object.entries(byChat)) {
 
     // group into speaker turns, take last CONTEXT_TURNS non-Matt turns
     const allTurns = groupIntoTurns(lookback);
-    const nonMattTurns = allTurns.filter((t) => t.sender !== "Matt Guiod");
-    const contextTurns = nonMattTurns.slice(-CONTEXT_TURNS);
+    const nonPersonaTurns = allTurns.filter((t) => !senderNames.has(t.sender));
+    const contextTurns = nonPersonaTurns.slice(-CONTEXT_TURNS);
 
     if (isJunk(msg.text, contextTurns)) {
       skipped++;
@@ -124,7 +146,7 @@ for (const [chat, messages] of Object.entries(byChat)) {
     }
 
     const inputContext = contextTurns.map(turnToText).join("\n");
-    const response = `Matt: ${msg.text}`;
+    const response = `${msg.sender}: ${msg.text}`;
 
     // window_text: full turns (all speakers) + reply + WINDOW_AFTER following msgs
     const allContextTurns = allTurns.slice(-CONTEXT_TURNS);

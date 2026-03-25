@@ -15,17 +15,17 @@
 import "dotenv/config";
 import OpenAI from "openai";
 import { LocalIndex } from "vectra";
-import path from "path";
-import { fileURLToPath } from "url";
 import { loadEncryptedJson } from "./crypto-utils.js";
+import { getPersona, getSharedPaths } from "../persona/loader.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const pairIndexPath = path.resolve(__dirname, "../../data/index-pair");
-const windowIndexPath = path.resolve(__dirname, "../../data/index-window");
-const enrichedEncPath = path.resolve(__dirname, "../../data/enriched.enc");
-const enrichedPath    = path.resolve(__dirname, "../../data/enriched.json");
-const corpusEncPath   = path.resolve(__dirname, "../../data/corpus.enc");
-const corpusPath      = path.resolve(__dirname, "../../data/corpus.json");
+const persona = getPersona();
+const shared = getSharedPaths();
+const pairIndexPath = persona.paths.indexPair;
+const windowIndexPath = persona.paths.indexWindow;
+const enrichedEncPath = persona.paths.enrichedEnc;
+const enrichedPath    = persona.paths.enrichedJson;
+const corpusEncPath   = shared.corpusEnc;
+const corpusPath      = shared.corpusJson;
 
 const client = new OpenAI();
 const pairIndex = new LocalIndex(pairIndexPath);
@@ -214,18 +214,18 @@ function rerank(candidates, keywordScores, queryType, queryLength, queryHumor) {
 /**
  * Search the full corpus (all senders) for conversation windows containing
  * query keywords. Used to ground responses about shared events/memories that
- * Matt may not have written about directly.
+ * the persona may not have written about directly.
  *
  * Scores windows (not individual messages) so that e.g. "brisket" appearing
  * near "steamboat" in the same conversation registers as a strong match.
  *
  * Returns formatted conversation snippets to inject as factual context.
  */
-export function loreSearch(query, topK = 3, windowSize = 4) {
+export function loreSearch(query, topK = 3, windowSize = 4, nameVariants = ["matt"]) {
   const { unigrams, bigrams } = extractTerms(query);
   if (unigrams.length === 0 && bigrams.length === 0) return [];
 
-  const maxPossible = bigrams.length * 2 + unigrams.length + 0.5; // +0.5 for Matt mention bonus
+  const maxPossible = bigrams.length * 2 + unigrams.length + 0.5; // +0.5 for persona name mention bonus
 
   const candidates = [];
 
@@ -247,8 +247,8 @@ export function loreSearch(query, topK = 3, windowSize = 4) {
       for (const unigram of unigrams) {
         if (windowText.includes(unigram)) score += 1;
       }
-      // Boost windows that explicitly mention Matt
-      if (windowText.includes("matt")) score += 0.5;
+      // Boost windows that explicitly mention the persona
+      if (nameVariants.some((n) => windowText.includes(n))) score += 0.5;
 
       if (score === 0) continue;
 

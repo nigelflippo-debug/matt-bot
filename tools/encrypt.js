@@ -18,14 +18,31 @@ import { keyFromHex, encryptFile } from "../src/rag/crypto-utils.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.resolve(__dirname, "../data");
-const srcDir = path.resolve(__dirname, "../src");
+const personasDir = path.resolve(__dirname, "../personas");
 
+// Parse --persona flag (default: encrypt all known personas)
+const args = process.argv.slice(2);
+const personaArg = args.indexOf("--persona") !== -1 ? args[args.indexOf("--persona") + 1] : null;
+
+// Shared files (always encrypted)
 const FILES = [
-  { src: "enriched.json", dest: "enriched.enc", dir: dataDir },
-  { src: "corpus.json",   dest: "corpus.enc",   dir: dataDir },
-  { src: "lore.json",     dest: "lore.enc",     dir: dataDir },
-  { src: "system-prompt.md", dest: "system-prompt.enc", dir: path.join(srcDir, "persona") },
+  { src: "corpus.json", dest: "corpus.enc", dir: dataDir },
 ];
+
+// Discover persona directories and add per-persona files
+const fs = await import("fs");
+const personaDirs = personaArg
+  ? [personaArg]
+  : fs.readdirSync(personasDir).filter((d) => fs.statSync(path.join(personasDir, d)).isDirectory());
+
+for (const pid of personaDirs) {
+  const pDataDir = path.join(dataDir, "personas", pid);
+  const pPersonaDir = path.join(personasDir, pid);
+
+  FILES.push({ src: "enriched.json", dest: "enriched.enc", dir: pDataDir });
+  FILES.push({ src: "lore.json", dest: "lore.enc", dir: pDataDir });
+  FILES.push({ src: "system-prompt.md", dest: "system-prompt.enc", dir: pPersonaDir });
+}
 
 const keyHex = process.env.CONTENT_ENCRYPTION_KEY;
 if (!keyHex) {

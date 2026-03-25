@@ -1,8 +1,8 @@
 /**
- * discord-log.js — capture real Matt's Discord messages as training examples
+ * discord-log.js — capture the real persona's Discord messages as training examples
  *
- * When real Matt posts in Discord, bot.js calls logMattMessage() with the
- * conversation context before his message and his reply text. Entries are
+ * When the real person posts in Discord, bot.js calls logPersonaMessage() with the
+ * conversation context before their message and their reply text. Entries are
  * stored in data/discord-pairs.json and lazily embedded into data/index-discord/.
  *
  * At query time, retrieveDiscord() returns the most semantically similar past
@@ -11,14 +11,13 @@
 
 import "dotenv/config";
 import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import OpenAI from "openai";
 import { LocalIndex } from "vectra";
+import { getPersona } from "../persona/loader.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const pairsPath = path.resolve(__dirname, "../../data/discord-pairs.json");
-const indexPath = path.resolve(__dirname, "../../data/index-discord");
+const persona = getPersona();
+const pairsPath = persona.paths.discordPairsJson;
+const indexPath = persona.paths.indexDiscord;
 
 const MAX_ENTRIES = 500;
 
@@ -44,15 +43,15 @@ function save(entries) {
 }
 
 // ---------------------------------------------------------------------------
-// Public: log a Matt message
+// Public: log a persona message
 // ---------------------------------------------------------------------------
 
 /**
- * Record a real Matt Discord message as a context-response pair.
+ * Record a real persona Discord message as a context-response pair.
  * context: the N prior messages formatted as "Name: text\nName: text\n..."
- * response: Matt's reply formatted as "Matt: text"
+ * response: the persona's reply formatted as "Name: text"
  */
-export function logMattMessage(context, response) {
+export function logPersonaMessage(context, response) {
   const entries = load();
 
   entries.push({
