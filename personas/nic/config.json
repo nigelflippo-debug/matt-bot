@@ -2,7 +2,7 @@
   "id": "nic",
   "name": "Nic",
   "senderNames": ["Nic Dipierro"],
-  "nameVariants": ["nic", "dipierro"],
+  "nameVariants": ["nic", "dipierro", "dicky"],
   "discordUserIdEnv": "NIC_DISCORD_USER_ID",
   "homeChannel": "gweeod",
   "memoryPhrases": {
