@@ -95,6 +95,9 @@ const REMEMBER_BACKOFF = [
   "relax, I'll remember stuff",
 ];
 
+// Home channel response rate — don't respond to every unprompted message
+const HOME_CHANNEL_RESPONSE_CHANCE = 0.75;
+
 // Bot cross-talk — allow occasional bot-to-bot exchanges in the home channel,
 // but cap at one consecutive bot-to-bot reply to prevent loops.
 const BOT_RESPONSE_CHANCE = 0.25;
@@ -404,6 +407,8 @@ client.on(Events.MessageCreate, async (message) => {
   if (onlyOthersMentioned) return;
   // Outside home channel, only respond when explicitly mentioned
   if (!inHomeChannel && !botMentioned) return;
+  // In home channel, randomly skip ~25% of unprompted messages to feel more organic
+  if (inHomeChannel && !botMentioned && !message.author.bot && Math.random() >= HOME_CHANNEL_RESPONSE_CHANCE) return;
 
   // Strip the mention(s) from the message text; detect --debug flag
   const rawMessage = message.content.replace(/<@!?\d+>/g, "").trim();
