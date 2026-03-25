@@ -30,7 +30,7 @@ function formatExamples(results) {
  * Inserts before "## Final Instruction" so the static examples and retrieved
  * examples are both present.
  */
-export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], retrievedMemories = [], directives = [], discordExamples = [], personProfile = null, aggression = null, personaName = "Matt") {
+export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], retrievedMemories = [], directives = [], discordExamples = [], personProfile = null, aggression = null, personaName = "Matt", crossTalkHint = null) {
   let injection = "";
 
   // Directives: behavioral rules the group has set — always inject.
@@ -148,6 +148,17 @@ ${memoryText}
 You've read about this stuff. It informs your opinions and reactions but you don't quote it like a wiki — you have takes shaped by it. If it's relevant, let it color what you say, not dictate it.
 
 ${bgText}
+
+---
+
+`;
+  }
+
+  // Cross-talk hint — injected when responding to another bot in a back-and-forth
+  if (crossTalkHint) {
+    injection += `## You're in a conversation right now
+
+${crossTalkHint}
 
 ---
 

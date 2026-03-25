@@ -672,7 +672,11 @@ client.on(Events.MessageCreate, async (message) => {
       .slice(-3)
       .map((m) => m.content);
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, retrievedMemories, directives, discordExamples, personProfile, aggression, persona.name);
+    const crossTalkHint = message.author.bot
+      ? `${senderName} just said something to you directly. This is a back-and-forth — engage with what they actually said. Respond to the specific thing, push back, ask something, keep the thread going. Don't just react to the topic and drop it.`
+      : null;
+
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, retrievedMemories, directives, discordExamples, personProfile, aggression, persona.name, crossTalkHint);
 
     log(requestId, "generating", { aggressive: !!aggression });
     const t3 = Date.now();
