@@ -355,13 +355,35 @@ function scheduleInjection() {
 client.once(Events.ClientReady, async (c) => {
   const pruned = pruneExpired();
   const stale = pruneStale();
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag, prunedExpired: pruned, prunedStale: stale }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag, persona: persona.id, prunedExpired: pruned, prunedStale: stale }));
   // Attribute person names to existing entries that predate person tagging — no-op after first run
   attributePersons().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_error", message: err.message })));
   // Deduplicate legacy lore entries — no-op once store is clean
   deduplicateLore().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_error", message: err.message })));
 
   if (injectionConfig.enabled) scheduleInjection();
+});
+
+// Discord connection lifecycle events — log for diagnosing silent downtime
+client.on(Events.ShardDisconnect, (event, shardId) => {
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "shard_disconnect", shardId, code: event.code }));
+});
+
+client.on(Events.ShardReconnecting, (shardId) => {
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "shard_reconnecting", shardId }));
+});
+
+client.on(Events.ShardResume, (shardId, replayedEvents) => {
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "shard_resume", shardId, replayedEvents }));
+});
+
+client.on(Events.ShardError, (error, shardId) => {
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "shard_error", shardId, message: error.message }));
+});
+
+// Unhandled promise rejections — catch anything that escapes normal error handling
+process.on("unhandledRejection", (reason) => {
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "unhandled_rejection", message: String(reason?.message ?? reason), stack: reason?.stack }));
 });
 
 client.on(Events.MessageCreate, async (message) => {
