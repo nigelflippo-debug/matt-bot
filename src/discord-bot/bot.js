@@ -99,9 +99,10 @@ const REMEMBER_BACKOFF = [
 const HOME_CHANNEL_RESPONSE_CHANCE = 0.9;
 
 // Bot cross-talk — allow occasional bot-to-bot exchanges in the home channel,
-// but cap at one consecutive bot-to-bot reply to prevent loops.
-const BOT_RESPONSE_CHANCE = 0.25;
-const lastWasBotExchange = new Map(); // channelId → bool
+// cap at BOT_CHAIN_MAX consecutive bot-to-bot replies to prevent infinite loops.
+const BOT_RESPONSE_CHANCE = 0.5;
+const BOT_CHAIN_MAX = 3;
+const botExchangeCount = new Map(); // channelId → consecutive bot reply count
 
 // Aggression state — per-channel tracking of provocation-triggered aggressive mode
 const aggressionState = new Map(); // channelId → {topic, remainingReplies}
@@ -360,14 +361,14 @@ client.on(Events.MessageCreate, async (message) => {
     if (message.author.id === client.user?.id) return;
     // Outside home channel: ignore all bots
     if (message.channel.name !== persona.homeChannel) return;
-    // In home channel: cap at 1 consecutive bot-to-bot exchange to prevent loops
-    if (lastWasBotExchange.get(message.channel.id)) return;
+    // In home channel: cap at BOT_CHAIN_MAX consecutive bot-to-bot exchanges
+    if ((botExchangeCount.get(message.channel.id) ?? 0) >= BOT_CHAIN_MAX) return;
     // 25% chance to respond to a bot message
     if (Math.random() >= BOT_RESPONSE_CHANCE) return;
     // Fall through — respond to this bot message
   } else {
     // Human message — reset bot exchange chain for this channel
-    lastWasBotExchange.set(message.channel.id, false);
+    botExchangeCount.set(message.channel.id, 0);
   }
 
   // Spam check — runs on every human message regardless of channel or mention
@@ -690,10 +691,9 @@ client.on(Events.MessageCreate, async (message) => {
     await message.reply(reply);
     log(requestId, "replied");
 
-    // If we just replied to a bot, mark this channel as having had a bot exchange
-    // so the next bot message in this channel is ignored (loop cap)
+    // Track consecutive bot-to-bot exchanges for loop cap
     if (message.author.bot) {
-      lastWasBotExchange.set(message.channel.id, true);
+      botExchangeCount.set(message.channel.id, (botExchangeCount.get(message.channel.id) ?? 0) + 1);
     }
 
     // Decrement aggression counter after each bot reply
