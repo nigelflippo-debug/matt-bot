@@ -589,9 +589,10 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
+  let typingInterval;
   try {
     await message.channel.sendTyping();
-    const typingInterval = setInterval(() => message.channel.sendTyping(), 8000);
+    typingInterval = setInterval(() => message.channel.sendTyping(), 8000);
     const t0 = Date.now();
 
     // Fetch recent channel messages
