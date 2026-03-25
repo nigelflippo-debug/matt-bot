@@ -80,6 +80,7 @@ function loadPersonaConfig(personaId) {
     discordUserId: raw.discordUserIdEnv ? (process.env[raw.discordUserIdEnv] ?? "") : "",
     homeChannel: raw.homeChannel,
     specialBehaviors: raw.specialBehaviors ?? {},
+    memoryPhrases: raw.memoryPhrases ?? null,
     paths: resolveDataPaths(raw.id),
     systemPromptEnc: path.join(personaDir, "system-prompt.enc"),
     systemPromptMd: path.join(personaDir, "system-prompt.md"),

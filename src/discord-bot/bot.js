@@ -73,20 +73,20 @@ function checkRememberRateLimit(userId) {
   return true;
 }
 
-const REMEMBER_ACKS = {
+const DEFAULT_REMEMBER_ACKS = {
   added:   ["got it", "noted", "yeah ok", "ok", "yep", "alright", "done", "locked in"],
   merged:  ["yeah I kind of already knew that", "I already had something like that, updated", "already had that one more or less", "merged with what I already had"],
   skipped: ["I already know that", "yeah I know", "already got that one", "I know I know"],
   split:   ["ok I split that — part goes in memory, part is a rule", "treated part of that as a rule and part as memory"],
 };
 
-const REMEMBER_NOW_ACKS = {
+const DEFAULT_REMEMBER_NOW_ACKS = {
   added:   ["got it, won't hold onto that forever", "ok, just for now", "noted, I'll forget it eventually", "yeah ok, temporarily"],
   merged:  ["already had something like that, updated the timing", "I know, updated"],
   skipped: ["already got that", "yeah I know"],
 };
 
-const REMEMBER_BACKOFF = [
+const DEFAULT_REMEMBER_BACKOFF = [
   "ok I get it, stop telling me things",
   "my brain is full, come back later",
   "you're going to break me",
@@ -94,6 +94,11 @@ const REMEMBER_BACKOFF = [
   "ok enough, I need a minute",
   "relax, I'll remember stuff",
 ];
+
+const mp = persona.memoryPhrases;
+const REMEMBER_ACKS = mp?.acks ?? DEFAULT_REMEMBER_ACKS;
+const REMEMBER_NOW_ACKS = mp?.nowAcks ?? DEFAULT_REMEMBER_NOW_ACKS;
+const REMEMBER_BACKOFF = mp?.backoff ?? DEFAULT_REMEMBER_BACKOFF;
 
 // Home channel response rate — don't respond to every unprompted message
 const HOME_CHANNEL_RESPONSE_CHANCE = 0.9;
@@ -194,13 +199,17 @@ const client = new Client({
   ],
 });
 
-const NOTED_TEMPLATES = [
+const DEFAULT_NOTED_TEMPLATES = [
   (f) => `oh wait — ${f}`,
   (f) => `noted btw — ${f}`,
   (f) => `wait, noting that — ${f}`,
   (f) => `oh, ${f} — noted`,
   (f) => `filing that away — ${f}`,
 ];
+
+const NOTED_TEMPLATES = mp?.notedTemplates
+  ? mp.notedTemplates.map((t) => (f) => t.replace("{fact}", f))
+  : DEFAULT_NOTED_TEMPLATES;
 
 
 function pickTemplate(templates, fact) {

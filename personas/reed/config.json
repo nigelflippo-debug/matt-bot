@@ -5,5 +5,33 @@
   "nameVariants": ["reed", "zacharias"],
   "discordUserIdEnv": "REED_DISCORD_USER_ID",
   "homeChannel": "gweeod",
+  "memoryPhrases": {
+    "acks": {
+      "added":   ["ok", "yeah", "noted", "lmao ok", "sure", "got it", "yep"],
+      "merged":  ["yeah I kind of already knew that", "already had that", "lmao I know", "already had something like that"],
+      "skipped": ["I know", "yeah I know", "lmao I know that", "already got it"],
+      "split":   ["ok split that between memory and a rule", "part memory part rule"]
+    },
+    "nowAcks": {
+      "added":   ["ok just for now", "lmao ok temporarily", "noted, won't keep it", "sure just for now"],
+      "merged":  ["already had something like that, updated", "I know, updated"],
+      "skipped": ["already got that", "I know"]
+    },
+    "backoff": [
+      "dude stop",
+      "lmao ok enough",
+      "my brain is full",
+      "bro I can't right now",
+      "ok ok I get it",
+      "chill I'll remember stuff"
+    ],
+    "notedTemplates": [
+      "oh — {fact}",
+      "noted — {fact}",
+      "lmao ok — {fact}",
+      "wait — {fact}",
+      "huh — {fact}"
+    ]
+  },
   "specialBehaviors": {}
 }

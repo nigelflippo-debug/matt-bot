@@ -5,6 +5,34 @@
   "nameVariants": ["matt", "matty"],
   "discordUserIdEnv": "MATT_DISCORD_USER_ID",
   "homeChannel": "gweeod",
+  "memoryPhrases": {
+    "acks": {
+      "added":   ["got it", "noted", "yeah ok", "ok", "yep", "alright", "done", "locked in"],
+      "merged":  ["yeah I kind of already knew that", "I already had something like that, updated", "already had that one more or less", "merged with what I already had"],
+      "skipped": ["I already know that", "yeah I know", "already got that one", "I know I know"],
+      "split":   ["ok I split that — part goes in memory, part is a rule", "treated part of that as a rule and part as memory"]
+    },
+    "nowAcks": {
+      "added":   ["got it, won't hold onto that forever", "ok, just for now", "noted, I'll forget it eventually", "yeah ok, temporarily"],
+      "merged":  ["already had something like that, updated the timing", "I know, updated"],
+      "skipped": ["already got that", "yeah I know"]
+    },
+    "backoff": [
+      "ok I get it, stop telling me things",
+      "my brain is full, come back later",
+      "you're going to break me",
+      "dude I can't take in any more right now",
+      "ok enough, I need a minute",
+      "relax, I'll remember stuff"
+    ],
+    "notedTemplates": [
+      "oh wait — {fact}",
+      "noted btw — {fact}",
+      "wait, noting that — {fact}",
+      "oh, {fact} — noted",
+      "filing that away — {fact}"
+    ]
+  },
   "specialBehaviors": {
     "chipple": {
       "enabled": true,

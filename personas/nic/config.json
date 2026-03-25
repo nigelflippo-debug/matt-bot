@@ -5,5 +5,33 @@
   "nameVariants": ["nic", "dipierro"],
   "discordUserIdEnv": "NIC_DISCORD_USER_ID",
   "homeChannel": "gweeod",
+  "memoryPhrases": {
+    "acks": {
+      "added":   ["locked in dawg", "lolol ok got it", "boys I noted that", "fk ok noted", "yeah ok locked in", "on it", "bet"],
+      "merged":  ["lolol already knew that dawg", "already had that one boys", "merged that with what I had", "yeah I had something like that"],
+      "skipped": ["lolol I know", "already got that dawg", "boys I know", "yeah yeah I know"],
+      "split":   ["ok split that — part memory part rule lolol", "treated part of that as a directive dawg"]
+    },
+    "nowAcks": {
+      "added":   ["ok just for now boys", "lolol noted, won't hold forever", "fk ok temporarily", "got it won't keep it"],
+      "merged":  ["already had something like that, updated it dawg", "yeah I know, updated"],
+      "skipped": ["already got that lolol", "yeah I know dawg"]
+    },
+    "backoff": [
+      "boys I'm at capacity",
+      "lolol ok enough stop",
+      "dawg my brain is full",
+      "fk ok I can't take any more rn",
+      "ok ok ok I get it",
+      "relax I'll remember stuff"
+    ],
+    "notedTemplates": [
+      "boys — {fact}",
+      "lolol noted — {fact}",
+      "wait — {fact}",
+      "fk ok — {fact}",
+      "noted dawg — {fact}"
+    ]
+  },
   "specialBehaviors": {}
 }
