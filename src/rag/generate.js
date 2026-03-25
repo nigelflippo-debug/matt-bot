@@ -220,5 +220,9 @@ export async function generate(systemPrompt, history, userMessage, imageUrls = [
     finishReason: response.choices[0].finish_reason,
   }));
 
-  return response.choices[0].message.content.trim();
+  let reply = response.choices[0].message.content.trim();
+  // Strip accidental name prefix — model sometimes mimics "Name: message" training data format
+  // Only matches capitalized proper-name patterns like "Reed: " or "Reed Zacharias: "
+  reply = reply.replace(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?:\s+/, "");
+  return reply;
 }
