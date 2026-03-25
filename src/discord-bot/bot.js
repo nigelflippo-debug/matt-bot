@@ -436,7 +436,8 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   // If someone else is tagged (and not the bot), stay out of it
-  if (onlyOthersMentioned) return;
+  // Skip this check for bot messages — reply mentions don't count as "someone else tagged"
+  if (!message.author.bot && onlyOthersMentioned) return;
   // Outside home channel, only respond when explicitly mentioned
   if (!inHomeChannel && !botMentioned) return;
   // In home channel, randomly skip ~25% of unprompted messages to feel more organic
