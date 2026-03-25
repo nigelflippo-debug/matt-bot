@@ -15,8 +15,10 @@ import OpenAI from "openai";
 import { LocalIndex } from "vectra";
 import fs from "fs";
 import { getPersona } from "../persona/loader.js";
+import { loadEncryptedJson } from "./crypto-utils.js";
 
 const persona = getPersona();
+const enrichedEncPath = persona.paths.enrichedEnc;
 const enrichedPath = persona.paths.enrichedJson;
 const pairIndexPath = persona.paths.indexPair;
 const windowIndexPath = persona.paths.indexWindow;
@@ -84,12 +86,12 @@ async function buildIndex(indexPath, records, getText, label) {
 
 // --- Main ---
 
-if (!fs.existsSync(enrichedPath)) {
-  console.error("enriched.json not found. Run enrich.js first.");
+if (!fs.existsSync(enrichedEncPath) && !fs.existsSync(enrichedPath)) {
+  console.error("enriched data not found. Run enrich.js first.");
   process.exit(1);
 }
 
-const records = JSON.parse(fs.readFileSync(enrichedPath, "utf8"));
+const records = loadEncryptedJson(enrichedEncPath, enrichedPath);
 console.log(`Loaded ${records.length} enriched records`);
 
 // Build indexes sequentially to avoid doubling the token rate

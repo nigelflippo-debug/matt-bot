@@ -25,7 +25,7 @@ COPY data/personas/ ./data-src/personas/
 # PERSONA env var selects which persona to load (default: matt).
 CMD ["sh", "-c", "\
   P=${PERSONA:-matt} && \
-  mkdir -p /app/data/personas/$P && \
+  mkdir -p /app/data && mkdir -p /app/data/personas/$P && \
   cp -n /app/data-src/corpus.enc /app/data/corpus.enc && \
   cp -n /app/data-src/personas/$P/enriched.enc /app/data/personas/$P/enriched.enc 2>/dev/null; \
   cp -n /app/data-src/personas/$P/lore.enc /app/data/personas/$P/lore.enc 2>/dev/null; \
