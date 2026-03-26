@@ -14,6 +14,7 @@ import { logPersonaMessage, embedPendingDiscord, retrieveDiscord } from "../rag/
 import { loadEncryptedText } from "../rag/crypto-utils.js";
 import { readUrl } from "../rag/url-reader.js";
 import { classifyAggression } from "../rag/aggression.js";
+import { initAffinity, scoreMessage, getDelayMs } from "../rag/topic-affinity.js";
 import { getPersona } from "../persona/loader.js";
 import { getRedis } from "../rag/redis-client.js";
 
@@ -361,6 +362,8 @@ client.once(Events.ClientReady, async (c) => {
   const pruned = pruneExpired();
   const stale = pruneStale();
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag, persona: persona.id, prunedExpired: pruned, prunedStale: stale }));
+  // Derive topic keywords from system prompt for claim delay routing
+  initAffinity(baseSystemPrompt).catch(() => {});
   // Attribute person names to existing entries that predate person tagging — no-op after first run
   attributePersons().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_error", message: err.message })));
   // Deduplicate legacy memory entries — no-op once store is clean
@@ -469,6 +472,14 @@ client.on(Events.MessageCreate, async (message) => {
             const secondsAgo = (Date.now() - parseInt(lastTs)) / 1000;
             if (secondsAgo < 45 || (secondsAgo < 180 && Math.random() < 0.5)) return;
           }
+        }
+
+        // Topic routing — delay before claiming so high-affinity bots win the race
+        if (!message.author.bot) {
+          const score = scoreMessage(message.content);
+          const delay = getDelayMs(score);
+          if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+          log(message.id.slice(-6), "coord_affinity", { score: score.toFixed(3), delayMs: delay });
         }
 
         const claimed = await redis.set(`coord:msg:${message.id}`, persona.id, "NX", "EX", 30);
