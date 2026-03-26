@@ -459,18 +459,23 @@ client.on(Events.MessageCreate, async (message) => {
     if (redis) {
       try {
         // 1. Topic routing — delay before claiming so high-affinity bots win the race
+        let affinityScore = 0;
         if (!message.author.bot) {
-          const score = scoreMessage(message.content);
-          const delay = getDelayMs(score);
+          affinityScore = scoreMessage(message.content);
+          const delay = getDelayMs(affinityScore);
           if (delay > 0) await new Promise((r) => setTimeout(r, delay));
-          log(message.id.slice(-6), "coord_affinity", { score: score.toFixed(3), delayMs: delay });
+          log(message.id.slice(-6), "coord_affinity", { score: affinityScore.toFixed(3), delayMs: delay });
         }
 
-        // 2. Atomic claim — first bot wins, losers get emoji reaction and bail
+        // 2. Atomic claim — first bot wins; losers pile on if topic matches, otherwise bail
         const claimed = await redis.set(`coord:msg:${message.id}`, persona.id, "NX", "EX", 30);
         if (!claimed) {
-          if (Math.random() < 0.2) message.react(LOSE_REACTIONS[Math.floor(Math.random() * LOSE_REACTIONS.length)]).catch(() => {});
-          return;
+          // High-affinity losers get a pile-on chance — topic overlaps multiple personas
+          const pileOnChance = getDelayMs(affinityScore) === 0 ? 0.5 : 0;
+          if (Math.random() >= pileOnChance) {
+            if (Math.random() < 0.2) message.react(LOSE_REACTIONS[Math.floor(Math.random() * LOSE_REACTIONS.length)]).catch(() => {});
+            return;
+          }
         }
         log(message.id.slice(-6), "coord_claim", { won: true });
 
