@@ -15,6 +15,7 @@ import { loadEncryptedText } from "../rag/crypto-utils.js";
 import { readUrl } from "../rag/url-reader.js";
 import { classifyAggression } from "../rag/aggression.js";
 import { getPersona } from "../persona/loader.js";
+import { getRedis } from "../rag/redis-client.js";
 
 const persona = getPersona();
 
@@ -102,6 +103,8 @@ const REMEMBER_BACKOFF = mp?.backoff ?? DEFAULT_REMEMBER_BACKOFF;
 
 // Home channel response rate — don't respond to every unprompted message
 const HOME_CHANNEL_RESPONSE_CHANCE = 0.9;
+// Pile-on chance — if another bot already claimed this message, respond anyway this often
+const HOME_PILE_ON_CHANCE = 0.15;
 
 // Bot cross-talk — allow occasional bot-to-bot exchanges in the home channel.
 // After an exchange, require BOT_COOLDOWN_MESSAGES human messages before bots
@@ -446,8 +449,24 @@ client.on(Events.MessageCreate, async (message) => {
   if (!message.author.bot && onlyOthersMentioned) return;
   // Outside home channel, only respond when explicitly mentioned
   if (!inHomeChannel && !botMentioned) return;
-  // In home channel, randomly skip ~25% of unprompted messages to feel more organic
+  // In home channel, randomly skip unprompted messages to feel more organic
   if (inHomeChannel && !botMentioned && !message.author.bot && Math.random() >= HOME_CHANNEL_RESPONSE_CHANCE) return;
+
+  // Redis coordination — atomic claim so only one bot responds per message.
+  // If another bot already claimed this message, apply pile-on chance and usually skip.
+  // Falls back gracefully if Redis is unavailable.
+  if (inHomeChannel && !botMentioned && !message.author.bot) {
+    const redis = getRedis();
+    if (redis) {
+      try {
+        const claimed = await redis.set(`coord:msg:${message.id}`, persona.id, "NX", "EX", 30);
+        if (!claimed && Math.random() >= HOME_PILE_ON_CHANCE) return;
+        log(message.id.slice(-6), "coord_claim", { won: !!claimed });
+      } catch (err) {
+        log(message.id.slice(-6), "coord_error", { message: err.message });
+      }
+    }
+  }
 
   // Strip the mention(s) from the message text; detect --debug flag
   const rawMessage = message.content.replace(/<@!?\d+>/g, "").trim();

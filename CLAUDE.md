@@ -112,6 +112,7 @@ Entity profiles: when a query names a person (Reed, Dave, etc.), all memories ta
 | `OPENAI_MODEL` | No | Override generation model (default: `gpt-4o`) |
 | `MATT_DISCORD_USER_ID` | No | Discord user ID for real Matt message logging |
 | `SPAM_USER_ID` | No | Discord user ID for spam rate limiting |
+| `REDIS_URL` | No | Redis connection string for cross-bot coordination (set to `${{Redis.REDIS_URL}}` in Railway) |
 
 ## Encryption
 
