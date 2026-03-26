@@ -104,7 +104,7 @@ const REMEMBER_BACKOFF = mp?.backoff ?? DEFAULT_REMEMBER_BACKOFF;
 // Home channel response rate — don't respond to every unprompted message
 const HOME_CHANNEL_RESPONSE_CHANCE = 0.9;
 // Pile-on chance — if another bot already claimed this message, respond anyway this often
-const HOME_PILE_ON_CHANCE = 0.15;
+const HOME_PILE_ON_CHANCE = 0.30;
 
 // Bot cross-talk — allow occasional bot-to-bot exchanges in the home channel.
 // After an exchange, require BOT_COOLDOWN_MESSAGES human messages before bots
