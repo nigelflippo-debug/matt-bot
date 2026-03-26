@@ -17,8 +17,8 @@ import { LocalIndex } from "vectra";
 import { getPersona } from "../persona/loader.js";
 
 const persona = getPersona();
-const memoryPath = persona.paths.loreJson;
-const memoryIndexPath = persona.paths.indexLore;
+const memoryPath = persona.paths.memoryJson;
+const memoryIndexPath = persona.paths.indexMemory;
 
 const DIRECTIVE_CAP = 20;
 
@@ -27,7 +27,7 @@ const RECENT_EXTRACTION_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const recentExtractions = []; // [{text, person, addedAt}]
 
 const openai = new OpenAI();
-const memoryIndex = new LocalIndex(loreIndexPath);
+const memoryIndex = new LocalIndex(memoryIndexPath);
 
 // ---------------------------------------------------------------------------
 // Storage helpers
