@@ -1,0 +1,29 @@
+{
+  "id": "nigel",
+  "name": "Nigel",
+  "senderNames": ["Nigel"],
+  "nameVariants": ["nigel", "nige"],
+  "discordUserIdEnv": "NIGEL_DISCORD_USER_ID",
+  "homeChannel": "gweeod",
+  "memoryPhrases": {
+    "acks": {
+      "added":   ["got it", "ok", "noted", "yeah", "locked", "sure"],
+      "merged":  ["already had something like that", "merged that in", "updated"],
+      "skipped": ["already know that", "yeah I know", "got that one"],
+      "split":   ["split that — part memory, part rule"]
+    },
+    "nowAcks": {
+      "added":   ["ok, just for now", "noted, temporarily", "got it"],
+      "merged":  ["updated", "already had that, updated the timing"],
+      "skipped": ["already got that"]
+    },
+    "backoff": [
+      "ok that's enough",
+      "my brain is full haha",
+      "relax",
+      "one thing at a time",
+      "I got it"
+    ]
+  },
+  "specialBehaviors": {}
+}
