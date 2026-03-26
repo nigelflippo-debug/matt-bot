@@ -395,7 +395,18 @@ client.on(Events.MessageCreate, async (message) => {
     if (message.author.id === client.user?.id) return;
     // Outside home channel: ignore all bots
     if (message.channel.name !== persona.homeChannel) return;
-    // 60% chance to respond to a bot message
+    // Only respond one level deep — if this bot message is itself a reply to another bot, bail.
+    // Prevents infinite chains while still allowing human → bot → bot exchanges.
+    if (message.reference?.messageId) {
+      try {
+        const parent = await message.channel.messages.fetch(message.reference.messageId);
+        if (parent.author.bot) return;
+      } catch {
+        // If we can't fetch the parent, bail to be safe
+        return;
+      }
+    }
+    // 25% chance to respond to a bot message
     if (Math.random() >= BOT_RESPONSE_CHANCE) return;
     // Fall through — respond to this bot message
   }
