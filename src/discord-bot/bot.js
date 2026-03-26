@@ -202,24 +202,7 @@ const client = new Client({
   ],
 });
 
-const DEFAULT_NOTED_TEMPLATES = [
-  (f) => `oh wait — ${f}`,
-  (f) => `noted btw — ${f}`,
-  (f) => `wait, noting that — ${f}`,
-  (f) => `oh, ${f} — noted`,
-  (f) => `filing that away — ${f}`,
-];
-
-const NOTED_TEMPLATES = mp?.notedTemplates
-  ? mp.notedTemplates.map((t) => (f) => t.replace("{fact}", f))
-  : DEFAULT_NOTED_TEMPLATES;
-
-
-function pickTemplate(templates, fact) {
-  return templates[Math.floor(Math.random() * templates.length)](fact);
-}
-
-async function runImplicitExtraction(conversationContext, requestId, message, notify = false) {
+async function runImplicitExtraction(conversationContext, requestId, message) {
   try {
     const facts = await extractImplicit(conversationContext);
     log(requestId, "implicit_extract", { found: facts.length, facts: facts.map((f) => f.text.slice(0, 60)) });
@@ -235,15 +218,6 @@ async function runImplicitExtraction(conversationContext, requestId, message, no
     if (anyNew) await message.react("🧠").catch(() => {});
     if (anyTemporal) await message.react("📅").catch(() => {});
 
-    if (notify && newFacts.length > 0) {
-      let line;
-      if (newFacts.length === 1) {
-        line = pickTemplate(NOTED_TEMPLATES, newFacts[0]);
-      } else {
-        line = `noted a few things btw:\n${newFacts.map((f) => `- ${f}`).join("\n")}`;
-      }
-      await message.channel.send(line).catch(() => {});
-    }
   } catch (err) {
     log(requestId, "implicit_error", { message: err.message });
   }
