@@ -11,7 +11,7 @@ The bots are aware, involved, and think it's funny.
 1. **Corpus** — Years of WhatsApp messages are parsed, cleaned, and enriched with semantic situation descriptions per persona
 2. **RAG retrieval** — When someone @mentions a bot, the message is enriched via LLM, embedded, and matched against dual vector indexes (situation-based + conversational) to find the most relevant real replies
 3. **Memory store** — Each bot maintains a persistent memory of facts, directives, and observations about the friend group. Facts are extracted implicitly from conversations and can be taught explicitly via commands. A 3-strike reinforcement system promotes provisional facts to permanent ones.
-4. **Redis coordination** — A shared Redis instance prevents pile-ons: the first bot to atomically claim a message ID wins; others apply a `HOME_PILE_ON_CHANCE` (15%) before also responding
+4. **Redis coordination** — A shared Redis instance manages who responds. Each bot scores the message against its topic affinity (derived from its system prompt at startup), delays proportionally, then races to claim via atomic SET NX. Losing bots react with emoji and may pile on if the topic overlaps their interests.
 5. **Generation** — Retrieved examples, memories, conversation context, and a detailed persona prompt are assembled and sent to GPT-4o, which generates a response in the persona's voice
 
 ## Architecture
@@ -20,9 +20,19 @@ The bots are aware, involved, and think it's funny.
 Discord message (@Bot)
     |
     v
+Topic affinity scoring (keywords from system prompt, cached at startup)
+    ├── name mentioned → max score (0ms delay)
+    ├── high affinity (≥0.4) → 0ms delay
+    ├── medium affinity → 400ms delay
+    └── low affinity → 1200ms delay
+    |
+    v
+Recency backoff (bot spoke recently → skip)
+    |
+    v
 Redis atomic claim (SET NX EX 30)
     ├── won: proceed
-    └── lost: 15% chance to also respond
+    └── lost: emoji reaction + pile-on chance (higher if topic overlaps)
     |
     v
 Query enrichment (gpt-4o-mini) ──> Semantic situation description
@@ -65,6 +75,7 @@ Implicit memory (parallel):
 | Generation | `src/rag/generate.js` | System prompt builder, OpenAI generation, name prefix stripping |
 | Memory store | `src/rag/memory-store.js` | Persistent memory — facts, directives, implicit extraction, 3-strike reinforcement, decay |
 | Redis client | `src/rag/redis-client.js` | Cross-bot coordination singleton, graceful fallback if REDIS_URL unset |
+| Topic affinity | `src/rag/topic-affinity.js` | Startup keyword extraction + per-message scoring to inform claim delay |
 | Discord log | `src/rag/discord-log.js` | Logs real persona messages from Discord for ongoing learning |
 | URL reader | `src/rag/url-reader.js` | Fetch a URL, extract facts, store as background knowledge |
 | Encryption | `src/rag/crypto-utils.js` | AES-256-GCM encryption for sensitive content files |
