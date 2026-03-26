@@ -11,13 +11,15 @@ import OpenAI from "openai";
 const client = new OpenAI();
 
 let keywords = []; // populated by initAffinity()
+let nameVariants = []; // populated by initAffinity()
 let ready = false;
 
 /**
  * Extract topic keywords from the persona's system prompt via gpt-4o-mini.
  * One-time call at startup; result cached for the process lifetime.
  */
-export async function initAffinity(systemPromptText) {
+export async function initAffinity(systemPromptText, variants = []) {
+  nameVariants = variants.map((v) => v.toLowerCase());
   try {
     const response = await client.chat.completions.create({
       model: "gpt-4o-mini",
@@ -51,12 +53,15 @@ export async function initAffinity(systemPromptText) {
 }
 
 /**
- * Score a message against this persona's topic keywords.
- * Returns 0–1: proportion of keywords that appear in the message.
+ * Score a message against this persona's topic keywords and name variants.
+ * Returns 1.0 immediately if the message names this persona (explicit or implicit mention).
+ * Otherwise returns 0–1: proportion of topic keywords that appear in the message.
  */
 export function scoreMessage(text) {
-  if (!ready || keywords.length === 0) return 0;
   const lower = text.toLowerCase();
+  // Name match — message addresses or refers to this persona by name or nickname
+  if (nameVariants.length > 0 && nameVariants.some((v) => lower.includes(v))) return 1.0;
+  if (!ready || keywords.length === 0) return 0;
   const hits = keywords.filter((k) => lower.includes(k)).length;
   return hits / keywords.length;
 }

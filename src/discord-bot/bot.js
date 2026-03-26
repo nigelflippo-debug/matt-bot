@@ -360,7 +360,7 @@ client.once(Events.ClientReady, async (c) => {
   const stale = pruneStale();
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag, persona: persona.id, prunedExpired: pruned, prunedStale: stale }));
   // Derive topic keywords from system prompt for claim delay routing
-  initAffinity(baseSystemPrompt).catch(() => {});
+  initAffinity(baseSystemPrompt, persona.nameVariants ?? []).catch(() => {});
   // Attribute person names to existing entries that predate person tagging — no-op after first run
   attributePersons().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_error", message: err.message })));
   // Deduplicate legacy memory entries — no-op once store is clean
