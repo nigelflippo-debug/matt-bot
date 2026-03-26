@@ -103,7 +103,7 @@ const REMEMBER_NOW_ACKS = mp?.nowAcks ?? DEFAULT_REMEMBER_NOW_ACKS;
 const REMEMBER_BACKOFF = mp?.backoff ?? DEFAULT_REMEMBER_BACKOFF;
 
 // Home channel response rate — don't respond to every unprompted message
-const HOME_CHANNEL_RESPONSE_CHANCE = 0.6;
+const HOME_CHANNEL_RESPONSE_CHANCE = 0.8;
 // Pile-on chance — if another bot already claimed this message, respond anyway this often.
 // Emojis losing bots may react with instead of silently doing nothing
 const LOSE_REACTIONS = ["💀", "😭", "👀", "😂", "💯", "🫡", "🗿", "🤡", "💩", "🥴", "🫠", "😤", "🤌", "🙄", "😮‍💨", "🤦", "🫵", "😵", "🤙", "👁️"];
