@@ -102,7 +102,7 @@ const REMEMBER_NOW_ACKS = mp?.nowAcks ?? DEFAULT_REMEMBER_NOW_ACKS;
 const REMEMBER_BACKOFF = mp?.backoff ?? DEFAULT_REMEMBER_BACKOFF;
 
 // Home channel response rate — don't respond to every unprompted message
-const HOME_CHANNEL_RESPONSE_CHANCE = 0.9;
+const HOME_CHANNEL_RESPONSE_CHANCE = 0.6;
 // Pile-on chance — if another bot already claimed this message, respond anyway this often.
 // Keep low for human messages — we want one bot to respond to the human, then cross-talk
 // to chain off the bot's reply rather than independently pile onto the human's message.
@@ -110,7 +110,7 @@ const HOME_PILE_ON_CHANCE = 0.05;
 
 // Bot cross-talk — when a bot posts, other bots may respond to it.
 // Redis claiming (below) prevents fan-out; this controls base engagement rate.
-const BOT_RESPONSE_CHANCE = 0.6;
+const BOT_RESPONSE_CHANCE = 0.25;
 
 // Aggression state — per-channel tracking of provocation-triggered aggressive mode
 const aggressionState = new Map(); // channelId → {topic, remainingReplies}
