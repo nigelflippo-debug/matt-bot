@@ -106,7 +106,7 @@ const REMEMBER_BACKOFF = mp?.backoff ?? DEFAULT_REMEMBER_BACKOFF;
 const HOME_CHANNEL_RESPONSE_CHANCE = 0.6;
 // Pile-on chance — if another bot already claimed this message, respond anyway this often.
 // Emojis losing bots may react with instead of silently doing nothing
-const LOSE_REACTIONS = ["💀", "😭", "👀", "😂", "💯", "🫡"];
+const LOSE_REACTIONS = ["💀", "😭", "👀", "😂", "💯", "🫡", "🗿", "🤡", "💩", "🥴", "🫠", "😤", "🤌", "🙄", "😮‍💨", "🤦", "🫵", "😵", "🤙", "👁️"];
 
 // Bot cross-talk — when a bot posts, other bots may respond to it.
 // Redis claiming (below) prevents fan-out; this controls base engagement rate.
