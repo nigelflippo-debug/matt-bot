@@ -107,6 +107,8 @@ const HOME_CHANNEL_RESPONSE_CHANCE = 0.6;
 // Keep low for human messages — we want one bot to respond to the human, then cross-talk
 // to chain off the bot's reply rather than independently pile onto the human's message.
 const HOME_PILE_ON_CHANCE = 0.05;
+// Emojis losing bots may react with instead of silently doing nothing
+const LOSE_REACTIONS = ["💀", "😭", "👀", "😂", "💯", "🫡"];
 
 // Bot cross-talk — when a bot posts, other bots may respond to it.
 // Redis claiming (below) prevents fan-out; this controls base engagement rate.
@@ -454,14 +456,27 @@ client.on(Events.MessageCreate, async (message) => {
 
   // Redis coordination — atomic claim so only one bot responds per message.
   // Covers both human and bot messages — prevents fan-out in cross-talk chains.
-  // If another bot already claimed this message, apply pile-on chance and usually skip.
   // Falls back gracefully if Redis is unavailable.
   if (inHomeChannel && !botMentioned) {
     const redis = getRedis();
     if (redis) {
       try {
+        // Recency backoff — if this persona spoke recently, back off to let others in.
+        // Only applies to human messages; cross-talk has its own organic pacing.
+        if (!message.author.bot) {
+          const lastTs = await redis.get(`coord:last:${message.channel.id}:${persona.id}`);
+          if (lastTs) {
+            const secondsAgo = (Date.now() - parseInt(lastTs)) / 1000;
+            if (secondsAgo < 45 || (secondsAgo < 180 && Math.random() < 0.5)) return;
+          }
+        }
+
         const claimed = await redis.set(`coord:msg:${message.id}`, persona.id, "NX", "EX", 30);
-        if (!claimed && Math.random() >= HOME_PILE_ON_CHANCE) return;
+        if (!claimed) {
+          // Losing bots react with an emoji ~20% of the time instead of silently disappearing
+          if (Math.random() < 0.2) message.react(LOSE_REACTIONS[Math.floor(Math.random() * LOSE_REACTIONS.length)]).catch(() => {});
+          if (Math.random() >= HOME_PILE_ON_CHANCE) return;
+        }
         log(message.id.slice(-6), "coord_claim", { won: !!claimed });
       } catch (err) {
         log(message.id.slice(-6), "coord_error", { message: err.message });
@@ -754,6 +769,11 @@ client.on(Events.MessageCreate, async (message) => {
     await message.reply(reply);
     log(requestId, "replied");
 
+    // Record response time so recency backoff knows when we last spoke in this channel
+    const redisClient = getRedis();
+    if (redisClient && inHomeChannel) {
+      redisClient.set(`coord:last:${message.channel.id}:${persona.id}`, Date.now(), "EX", 3600).catch(() => {});
+    }
 
     // Decrement aggression counter after each bot reply
     if (aggression) decrementAggression(message.channel.id);
