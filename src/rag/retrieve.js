@@ -35,7 +35,7 @@ const windowIndex = new LocalIndex(windowIndexPath);
 const allRecords = loadEncryptedJson(enrichedEncPath, enrichedPath);
 const recordById = new Map(allRecords.map((r) => [r.id, r]));
 
-// Load full corpus and group by chat for lore search
+// Load full corpus and group by chat for window search
 const fullCorpus = loadEncryptedJson(corpusEncPath, corpusPath);
 const corpusByChat = {};
 for (const msg of fullCorpus) {
@@ -208,7 +208,7 @@ function rerank(candidates, keywordScores, queryType, queryLength, queryHumor) {
 }
 
 // ---------------------------------------------------------------------------
-// Lore search — keyword scan over ALL messages to surface shared memories
+// Window search — keyword scan over ALL messages to surface shared memories
 // ---------------------------------------------------------------------------
 
 /**
@@ -221,7 +221,7 @@ function rerank(candidates, keywordScores, queryType, queryLength, queryHumor) {
  *
  * Returns formatted conversation snippets to inject as factual context.
  */
-export function loreSearch(query, topK = 3, windowSize = 4, nameVariants = ["matt"]) {
+export function windowSearch(query, topK = 3, windowSize = 4, nameVariants = ["matt"]) {
   const { unigrams, bigrams } = extractTerms(query);
   if (unigrams.length === 0 && bigrams.length === 0) return [];
 

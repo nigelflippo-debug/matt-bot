@@ -10,7 +10,7 @@ import "dotenv/config";
 import path from "path";
 import readline from "readline";
 import { fileURLToPath } from "url";
-import { retrieve, loreSearch } from "../src/rag/retrieve.js";
+import { retrieve, windowSearch } from "../src/rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../src/rag/generate.js";
 import { loadEncryptedText } from "../src/rag/crypto-utils.js";
 
@@ -38,9 +38,9 @@ async function ask() {
     input = input.trim();
     if (!input) return ask();
 
-    const [results, loreWindows] = await Promise.all([
+    const [results, contextWindows] = await Promise.all([
       retrieve(input, 5),
-      loreSearch(input, 3),
+      windowSearch(input, 3),
     ]);
 
     if (DEBUG) {
@@ -51,9 +51,9 @@ async function ask() {
           `\n  ${i + 1}. [${responseType} / ${lengthBucket} / ${timestamp.slice(0, 10)}]${ctx}\n  ${response}`
         );
       });
-      if (loreWindows.length > 0) {
-        console.log("\n[lore windows]");
-        loreWindows.forEach((w, i) => console.log(`\n  ${i + 1}. [${w.chat}]\n${w.text.split("\n").map(l => `    ${l}`).join("\n")}`));
+      if (contextWindows.length > 0) {
+        console.log("\n[context windows]");
+        contextWindows.forEach((w, i) => console.log(`\n  ${i + 1}. [${w.chat}]\n${w.text.split("\n").map(l => `    ${l}`).join("\n")}`));
       }
       console.log();
     }
@@ -63,7 +63,7 @@ async function ask() {
       .slice(-3)
       .map((m) => m.content);
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, contextWindows, recentBotReplies);
     const reply = await generate(systemPrompt, history, input);
     history.push({ role: "user", content: input });
     history.push({ role: "assistant", content: reply });

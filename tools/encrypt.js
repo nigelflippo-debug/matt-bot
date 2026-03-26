@@ -40,7 +40,7 @@ for (const pid of personaDirs) {
   const pPersonaDir = path.join(personasDir, pid);
 
   FILES.push({ src: "enriched.json", dest: "enriched.enc", dir: pDataDir });
-  FILES.push({ src: "lore.json", dest: "lore.enc", dir: pDataDir });
+  FILES.push({ src: "memory.json", dest: "memory.enc", dir: pDataDir });
   FILES.push({ src: "system-prompt.md", dest: "system-prompt.enc", dir: pPersonaDir });
 }
 

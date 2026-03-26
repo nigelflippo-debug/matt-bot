@@ -8,11 +8,11 @@ node_modules/
 data/index/
 data/index-pair/
 data/index-window/
-data/index-lore/
+data/index-memory/
 data/index-discord/
 data/personas/*/index-pair/
 data/personas/*/index-window/
-data/personas/*/index-lore/
+data/personas/*/index-memory/
 data/personas/*/index-discord/
 
 # Discord conversation pairs — personal data, persisted on Railway volume
@@ -22,9 +22,9 @@ data/personas/*/discord-pairs.json
 # Plaintext content — deploy encrypted .enc versions instead
 data/enriched.json
 data/corpus.json
-data/lore.json
+data/memory.json
 data/personas/*/enriched.json
-data/personas/*/lore.json
+data/personas/*/memory.json
 src/persona/system-prompt.md
 personas/*/system-prompt.md
 

@@ -1,5 +1,5 @@
 /**
- * lore-store.js — persistent user-curated memory store
+ * memory-store.js — persistent user-curated memory store
  *
  * Four categories:
  *   directive   — behavioral rules for the bot. Always injected into system prompt. Cap: DIRECTIVE_CAP.
@@ -17,8 +17,8 @@ import { LocalIndex } from "vectra";
 import { getPersona } from "../persona/loader.js";
 
 const persona = getPersona();
-const lorePath = persona.paths.loreJson;
-const loreIndexPath = persona.paths.indexLore;
+const memoryPath = persona.paths.loreJson;
+const memoryIndexPath = persona.paths.indexLore;
 
 const DIRECTIVE_CAP = 20;
 
@@ -27,7 +27,7 @@ const RECENT_EXTRACTION_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const recentExtractions = []; // [{text, person, addedAt}]
 
 const openai = new OpenAI();
-const loreIndex = new LocalIndex(loreIndexPath);
+const memoryIndex = new LocalIndex(loreIndexPath);
 
 // ---------------------------------------------------------------------------
 // Storage helpers
@@ -35,13 +35,13 @@ const loreIndex = new LocalIndex(loreIndexPath);
 
 function makeId() {
   const rand = Math.random().toString(36).slice(2, 6);
-  return `lore_${Date.now()}_${rand}`;
+  return `mem_${Date.now()}_${rand}`;
 }
 
 function load() {
   let entries = [];
-  if (fs.existsSync(lorePath)) {
-    entries = JSON.parse(fs.readFileSync(lorePath, "utf8"));
+  if (fs.existsSync(memoryPath)) {
+    entries = JSON.parse(fs.readFileSync(memoryPath, "utf8"));
   }
 
   // Migration: backfill id, category, embedded for pre-v2 entries
@@ -73,13 +73,13 @@ function load() {
     if (!Object.prototype.hasOwnProperty.call(entry, "person")) { entry.person = null; dirty = true; }
     if (!Object.prototype.hasOwnProperty.call(entry, "lastAccessedAt")) { entry.lastAccessedAt = null; dirty = true; }
   }
-  if (dirty) fs.writeFileSync(lorePath, JSON.stringify(entries, null, 2));
+  if (dirty) fs.writeFileSync(memoryPath, JSON.stringify(entries, null, 2));
 
   return entries;
 }
 
 function save(entries) {
-  fs.writeFileSync(lorePath, JSON.stringify(entries, null, 2));
+  fs.writeFileSync(memoryPath, JSON.stringify(entries, null, 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ export function pruneExpired() {
 
   if (pruned.length > 0) {
     save(kept);
-    console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_pruned", count: pruned.length, ids: pruned.map((e) => e.id) }));
+    console.log(JSON.stringify({ ts: now.toISOString(), stage: "memory_pruned", count: pruned.length, ids: pruned.map((e) => e.id) }));
   }
 
   return pruned.length;
@@ -149,7 +149,7 @@ export function pruneStale() {
 
   if (pruned > 0) {
     save(kept);
-    console.log(JSON.stringify({ ts: now.toISOString(), stage: "lore_stale_pruned", count: pruned }));
+    console.log(JSON.stringify({ ts: now.toISOString(), stage: "memory_stale_pruned", count: pruned }));
   }
 
   return pruned;
@@ -296,14 +296,14 @@ async function checkContradiction(newFact, candidates) {
 
 async function preFilterCandidates(text, candidates, n = 20) {
   if (candidates.length <= n) return candidates;
-  if (!(await loreIndex.isIndexCreated())) return candidates.slice(0, n);
+  if (!(await memoryIndex.isIndexCreated())) return candidates.slice(0, n);
 
   try {
     const embResponse = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: [text],
     });
-    const results = await loreIndex.queryItems(embResponse.data[0].embedding, n * 2);
+    const results = await memoryIndex.queryItems(embResponse.data[0].embedding, n * 2);
 
     const candidateById = new Map(candidates.map((e) => [e.id, e]));
     const filtered = results
@@ -422,9 +422,9 @@ function detectTemporalExpiry(text, now = new Date()) {
  * then coalescing each part with existing same-category entries.
  * Returns { action: 'added' | 'merged' | 'skipped' | 'capped' | 'split', category? }
  */
-export async function addLore(text, addedBy = "unknown", opts = {}) {
+export async function addMemory(text, addedBy = "unknown", opts = {}) {
   const parts = await splitOrClassify(text);
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_classified", parts: parts.map((p) => ({ category: p.category, person: p.person, text: p.text.slice(0, 60) })) }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "memory_classified", parts: parts.map((p) => ({ category: p.category, person: p.person, text: p.text.slice(0, 60) })) }));
 
   if (parts.length > 1) {
     await Promise.all(parts.map((p) => addSingle(p.text, p.category, addedBy, p.person, opts)));
@@ -439,7 +439,7 @@ async function addSingle(text, category, addedBy, person = null, opts = {}) {
   const sameCat = entries.filter((e) => e.category === category);
 
   if (category === "directive" && sameCat.length >= DIRECTIVE_CAP) {
-    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_capped", category, count: sameCat.length }));
+    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "memory_capped", category, count: sameCat.length }));
     return { action: "capped", category };
   }
 
@@ -529,17 +529,17 @@ async function addSingle(text, category, addedBy, person = null, opts = {}) {
  * Facts/episodic: vector search. Directives: LLM match against full list (max 20).
  * Returns { removed: number, entries: [{id, text, category}] }
  */
-export async function removeLore(query) {
+export async function removeMemory(query) {
   const entries = load();
 
   // --- Semantic search for facts/episodic via vector index ---
   const semanticMatches = [];
-  if (await loreIndex.isIndexCreated()) {
+  if (await memoryIndex.isIndexCreated()) {
     const embResponse = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: [query],
     });
-    const results = await loreIndex.queryItems(embResponse.data[0].embedding, 5);
+    const results = await memoryIndex.queryItems(embResponse.data[0].embedding, 5);
     const entryById = new Map(entries.map((e) => [e.id, e]));
     for (const r of results) {
       const entry = entryById.get(r.item.metadata.id);
@@ -586,10 +586,10 @@ export async function removeLore(query) {
   save(entries.filter((e) => !removeIds.has(e.id)));
 
   // Remove from vector index
-  if (await loreIndex.isIndexCreated()) {
+  if (await memoryIndex.isIndexCreated()) {
     for (const entry of toRemove) {
       if (entry.embedded) {
-        try { await loreIndex.deleteItem(entry.id); } catch { /* ignore */ }
+        try { await memoryIndex.deleteItem(entry.id); } catch { /* ignore */ }
       }
     }
   }
@@ -607,19 +607,19 @@ export async function removeLore(query) {
  * Call this at the start of each bot query — it's a no-op if nothing is pending.
  * Returns the number of entries embedded.
  */
-export async function embedPendingLore() {
+export async function embedPendingMemory() {
   const entries = load();
   const pending = entries.filter((e) => e.category === "memory" && e.embedded === false);
 
   if (pending.length === 0) {
-    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_embed_check", pending: 0 }));
+    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "memory_embed_check", pending: 0 }));
     return 0;
   }
 
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_embed_start", pending: pending.length, ids: pending.map((e) => e.id) }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "memory_embed_start", pending: pending.length, ids: pending.map((e) => e.id) }));
 
-  if (!(await loreIndex.isIndexCreated())) {
-    await loreIndex.createIndex();
+  if (!(await memoryIndex.isIndexCreated())) {
+    await memoryIndex.createIndex();
   }
 
   const embResponse = await openai.embeddings.create({
@@ -627,15 +627,15 @@ export async function embedPendingLore() {
     input: pending.map((e) => e.text),
   });
 
-  await loreIndex.beginUpdate();
+  await memoryIndex.beginUpdate();
   for (let i = 0; i < pending.length; i++) {
-    await loreIndex.upsertItem({
+    await memoryIndex.upsertItem({
       id: pending[i].id,
       vector: embResponse.data[i].embedding,
       metadata: { id: pending[i].id },
     });
   }
-  await loreIndex.endUpdate();
+  await memoryIndex.endUpdate();
 
   // Mark as embedded
   for (const entry of pending) {
@@ -644,7 +644,7 @@ export async function embedPendingLore() {
   }
   save(entries);
 
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "lore_embedded", count: pending.length }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "memory_embedded", count: pending.length }));
   return pending.length;
 }
 
@@ -669,8 +669,8 @@ function computeAccessRecency(lastAccessedAt) {
  *
  * Returns { memories: entry[], personProfile: { person: string, memories: entry[] } | null }
  */
-export async function retrieveLore(query, k = 5) {
-  if (!(await loreIndex.isIndexCreated())) return { memories: [], personProfile: null };
+export async function retrieveMemory(query, k = 5) {
+  if (!(await memoryIndex.isIndexCreated())) return { memories: [], personProfile: null };
 
   const embResponse = await openai.embeddings.create({
     model: "text-embedding-3-small",
@@ -678,7 +678,7 @@ export async function retrieveLore(query, k = 5) {
   });
   const vector = embResponse.data[0].embedding;
 
-  const results = await loreIndex.queryItems(vector, k);
+  const results = await memoryIndex.queryItems(vector, k);
 
   const entries = load();
   const entryById = new Map(entries.map((e) => [e.id, e]));
@@ -773,7 +773,7 @@ export function getDirectives() {
 // Public: getAllLore (for list lore command)
 // ---------------------------------------------------------------------------
 
-export function getAllLore() {
+export function getAllMemory() {
   return load();
 }
 
@@ -789,10 +789,10 @@ export function getAllLore() {
  * Idempotent — no-op once the store is clean (no pairs above threshold).
  * Call at startup after attributePersons(). Returns { merged, removed }.
  */
-export async function deduplicateLore() {
+export async function deduplicateMemory() {
   const DEDUP_THRESHOLD = 0.85;
 
-  if (!(await loreIndex.isIndexCreated())) {
+  if (!(await memoryIndex.isIndexCreated())) {
     console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_skip", reason: "no_index" }));
     return { merged: 0, removed: 0 };
   }
@@ -825,7 +825,7 @@ export async function deduplicateLore() {
     const embedding = embeddingById.get(entry.id);
     if (!embedding) continue;
 
-    const results = await loreIndex.queryItems(embedding, 10);
+    const results = await memoryIndex.queryItems(embedding, 10);
     const canonicalById = new Map(targets.slice(0, i).filter((e) => !removedIds.has(e.id)).map((e) => [e.id, e]));
 
     const candidates = results
@@ -864,7 +864,7 @@ export async function deduplicateLore() {
 
   // Remove stale vectors for removed entries
   for (const id of removedIds) {
-    try { await loreIndex.deleteItem(id); } catch { /* ignore */ }
+    try { await memoryIndex.deleteItem(id); } catch { /* ignore */ }
   }
 
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_done", merged, removed, totalCleaned: merged + removed }));

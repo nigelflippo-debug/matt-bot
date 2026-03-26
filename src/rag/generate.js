@@ -30,7 +30,7 @@ function formatExamples(results) {
  * Inserts before "## Final Instruction" so the static examples and retrieved
  * examples are both present.
  */
-export function buildSystemPrompt(basePrompt, results, loreWindows = [], recentBotReplies = [], retrievedMemories = [], directives = [], discordExamples = [], personProfile = null, aggression = null, personaName = "Matt", crossTalkHint = null) {
+export function buildSystemPrompt(basePrompt, results, contextWindows = [], recentBotReplies = [], retrievedMemories = [], directives = [], discordExamples = [], personProfile = null, aggression = null, personaName = "Matt", crossTalkHint = null) {
   let injection = "";
 
   // Directives: behavioral rules the group has set — always inject.
@@ -51,13 +51,13 @@ ${directiveText}
   // so the model weights them more heavily (recency bias).
 
   // Lore block: factual context from the group chat about shared events/memories.
-  if (loreWindows.length > 0) {
-    const loreText = loreWindows.map((l) => l.text).join("\n\n---\n\n");
+  if (contextWindows.length > 0) {
+    const contextText = contextWindows.map((l) => l.text).join("\n\n---\n\n");
     injection += `## Context from the group chat
 
 These are real messages from the group about this topic. Use them to ground your response — do not invent details that aren't present here. If the context doesn't give you enough to go on, be vague rather than making something up.
 
-${loreText}
+${contextText}
 
 ---
 

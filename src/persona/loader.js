@@ -30,16 +30,16 @@ function resolveDataPaths(personaId) {
     srcDir: srcBase,
     enrichedEnc: path.join(base, "enriched.enc"),
     enrichedJson: path.join(base, "enriched.json"),
-    loreJson: path.join(base, "lore.json"),
+    memoryJson: path.join(base, "memory.json"),
     discordPairsJson: path.join(base, "discord-pairs.json"),
     indexPair: path.join(base, "index-pair"),
     indexWindow: path.join(base, "index-window"),
-    indexLore: path.join(base, "index-lore"),
+    indexMemory: path.join(base, "index-memory"),
     indexDiscord: path.join(base, "index-discord"),
     // Seed paths for production deployment (copied from image to persistent volume)
     seedEnrichedEnc: srcBase ? path.join(srcBase, "enriched.enc") : null,
-    seedLoreEnc: srcBase ? path.join(srcBase, "lore.enc") : null,
-    seedLoreJson: srcBase ? path.join(srcBase, "lore.json") : null,
+    seedMemoryEnc: srcBase ? path.join(srcBase, "memory.enc") : null,
+    seedMemoryJson: srcBase ? path.join(srcBase, "memory.json") : null,
   };
 }
 

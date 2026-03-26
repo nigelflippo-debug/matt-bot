@@ -1,9 +1,9 @@
 /**
- * merge-lore.js — Merge seed lore into the persistent volume lore store.
+ * merge-memory.js — Merge seed memory into the persistent volume memory store.
  *
- * Called at startup. Reads /app/data-src/lore.enc (baked into the image),
+ * Called at startup. Reads /app/data-src/memory.enc (baked into the image),
  * decrypts it, and appends any entries whose IDs are not already in
- * /app/data/lore.json. Never removes or overwrites existing volume entries.
+ * /app/data/memory.json. Never removes or overwrites existing volume entries.
  */
 
 import fs from "fs";
@@ -11,12 +11,12 @@ import { loadEncryptedJson } from "./crypto-utils.js";
 import { getPersona } from "../persona/loader.js";
 
 const persona = getPersona();
-const seedEncPath = persona.paths.seedLoreEnc ?? "";
-const seedJsonPath = persona.paths.seedLoreJson ?? "";
-const livePath = persona.paths.loreJson;
+const seedEncPath = persona.paths.seedMemoryEnc ?? "";
+const seedJsonPath = persona.paths.seedMemoryJson ?? "";
+const livePath = persona.paths.memoryJson;
 
 if (!fs.existsSync(seedEncPath) && !fs.existsSync(seedJsonPath)) {
-  console.log("merge-lore: no seed file, skipping");
+  console.log("merge-memory: no seed file, skipping");
   process.exit(0);
 }
 
@@ -31,10 +31,10 @@ const liveIds = new Set(live.map((e) => e.id));
 const toAdd = seed.filter((e) => !liveIds.has(e.id));
 
 if (toAdd.length === 0) {
-  console.log(`merge-lore: live has ${live.length} entries, seed has ${seed.length} — nothing new`);
+  console.log(`merge-memory: live has ${live.length} entries, seed has ${seed.length} — nothing new`);
   process.exit(0);
 }
 
 const merged = [...live, ...toAdd];
 fs.writeFileSync(livePath, JSON.stringify(merged, null, 2));
-console.log(`merge-lore: added ${toAdd.length} new entries (${live.length} → ${merged.length} total)`);
+console.log(`merge-memory: added ${toAdd.length} new entries (${live.length} → ${merged.length} total)`);

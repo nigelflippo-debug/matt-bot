@@ -2,14 +2,14 @@
  * bot.js — Persona Bot Discord bot
  *
  * Responds as the configured persona when mentioned in a Discord channel.
- * Uses the simple pipeline: light retrieval (K=5) + lore-heavy system prompt.
+ * Uses the simple pipeline: light retrieval (K=5) + memory-heavy system prompt.
  */
 
 import "dotenv/config";
 import { Client, Events, GatewayIntentBits, MessageFlags } from "discord.js";
-import { retrieve, loreSearch } from "../rag/retrieve.js";
+import { retrieve, windowSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
-import { addLore, removeLore, getAllLore, embedPendingLore, retrieveLore, getDirectives, pruneExpired, pruneStale, extractImplicit, addImplicit, attributePersons, deduplicateLore } from "../rag/lore-store.js";
+import { addMemory, removeMemory, getAllMemory, embedPendingMemory, retrieveMemory, getDirectives, pruneExpired, pruneStale, extractImplicit, addImplicit, attributePersons, deduplicateMemory } from "../rag/memory-store.js";
 import { logPersonaMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 import { loadEncryptedText } from "../rag/crypto-utils.js";
 import { readUrl } from "../rag/url-reader.js";
@@ -277,16 +277,16 @@ async function runChippleMeltdown(channel) {
     const opener = CHIPPLE_OPENERS[Math.floor(Math.random() * CHIPPLE_OPENERS.length)];
     const closer = CHIPPLE_CLOSERS[Math.floor(Math.random() * CHIPPLE_CLOSERS.length)];
 
-    const [results, loreWindows] = await Promise.all([
+    const [results, contextWindows] = await Promise.all([
       retrieve(seed, 5, "", recentExampleIds),
-      loreSearch(seed, 3, 4, persona.nameVariants),
+      windowSearch(seed, 3, 4, persona.nameVariants),
     ]);
-    const [loreResult, directives] = await Promise.all([
-      retrieveLore(seed, 8),
+    const [memoryResult, directives] = await Promise.all([
+      retrieveMemory(seed, 8),
       Promise.resolve(getDirectives()),
     ]);
-    const { memories: retrievedMemories, personProfile } = loreResult;
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, [], retrievedMemories, directives, [], personProfile, null, persona.name);
+    const { memories: retrievedMemories, personProfile } = memoryResult;
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, contextWindows, [], retrievedMemories, directives, [], personProfile, null, persona.name);
 
     // Send three messages with typing breaks for dramatic effect
     await channel.sendTyping();
@@ -324,20 +324,20 @@ async function runInjection() {
   }
 
   try {
-    const [results, loreWindows] = await Promise.all([
+    const [results, contextWindows] = await Promise.all([
       retrieve(INJECTION_SEED, 5, "", recentExampleIds),
-      loreSearch(INJECTION_SEED, 3, 4, persona.nameVariants),
+      windowSearch(INJECTION_SEED, 3, 4, persona.nameVariants),
     ]);
     trackExamples(results.map((r) => r.id));
 
-    const [loreResult, directives, discordExamples] = await Promise.all([
-      retrieveLore(INJECTION_SEED, 8),
+    const [memoryResult, directives, discordExamples] = await Promise.all([
+      retrieveMemory(INJECTION_SEED, 8),
       Promise.resolve(getDirectives()),
       retrieveDiscord(INJECTION_SEED, 3),
     ]);
-    const { memories: retrievedMemories, personProfile } = loreResult;
+    const { memories: retrievedMemories, personProfile } = memoryResult;
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, [], retrievedMemories, directives, discordExamples, personProfile, null, persona.name);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, contextWindows, [], retrievedMemories, directives, discordExamples, personProfile, null, persona.name);
     const message = await generate(systemPrompt, [], INJECTION_SEED);
 
     for (const ch of channels) {
@@ -364,8 +364,8 @@ client.once(Events.ClientReady, async (c) => {
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag, persona: persona.id, prunedExpired: pruned, prunedStale: stale }));
   // Attribute person names to existing entries that predate person tagging — no-op after first run
   attributePersons().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_error", message: err.message })));
-  // Deduplicate legacy lore entries — no-op once store is clean
-  deduplicateLore().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_error", message: err.message })));
+  // Deduplicate legacy memory entries — no-op once store is clean
+  deduplicateMemory().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_error", message: err.message })));
 
   if (injectionConfig.enabled) scheduleInjection();
 });
@@ -439,7 +439,7 @@ client.on(Events.MessageCreate, async (message) => {
         const passiveRequestId = `p_${message.id.slice(-6)}`;
         log(passiveRequestId, "passive_extract_trigger", { channel: message.channel.name, messages: buf.length });
         runImplicitExtraction(extractionContext, passiveRequestId, message, false).catch(() => {});
-        embedPendingLore().catch(() => {});
+        embedPendingMemory().catch(() => {});
       }
     }
   }
@@ -489,7 +489,7 @@ client.on(Events.MessageCreate, async (message) => {
     preview: userMessage.slice(0, 80),
   });
 
-  // Handle "remember: X" and "remember for now: X" — store a lore entry and acknowledge
+  // Handle "remember: X" and "remember for now: X" — store a memory entry and acknowledge
   const rememberMatch = userMessage.match(/^remember(?:\s+for\s+now)?:\s*(.+)/i);
   const rememberIsEpisodic = /^remember\s+for\s+now:/i.test(userMessage);
   if (rememberMatch) {
@@ -504,7 +504,7 @@ client.on(Events.MessageCreate, async (message) => {
 
     if (rememberIsEpisodic) {
       // "remember for now:" — memory with temporal expiry
-      const result = await addLore(`for now: ${fact}`, senderName);
+      const result = await addMemory(`for now: ${fact}`, senderName);
       log(requestId, "memory_write", { fact, addedBy: senderName, action: result.action, path: "temporary" });
       const pool = REMEMBER_NOW_ACKS[result.action] ?? ["ok"];
       await message.reply(pool[Math.floor(Math.random() * pool.length)]);
@@ -513,7 +513,7 @@ client.on(Events.MessageCreate, async (message) => {
       if (emoji) await message.react(emoji).catch(() => {});
     } else {
       // "remember:" from any user — permanent memory
-      const result = await addLore(fact, senderName);
+      const result = await addMemory(fact, senderName);
       log(requestId, "memory_write", { fact, addedBy: senderName, action: result.action, path: "permanent", trusted: isTrusted });
       const pool = REMEMBER_ACKS[result.action] ?? ["ok"];
       await message.reply(pool[Math.floor(Math.random() * pool.length)]);
@@ -530,11 +530,11 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  // Handle "list memory" — send all lore entries as a JSON file attachment
+  // Handle "list memory" — send all memory entries as a JSON file attachment
   if (/^list memory$/i.test(userMessage)) {
-    const entries = getAllLore();
+    const entries = getAllMemory();
     if (entries.length === 0) {
-      await message.reply(`No lore stored yet.`);
+      await message.reply(`No memories stored yet.`);
       return;
     }
     const sorted = [...entries].sort((a, b) => (b.confidence ?? 1) - (a.confidence ?? 1));
@@ -547,12 +547,12 @@ client.on(Events.MessageCreate, async (message) => {
     const buf = Buffer.from(JSON.stringify(sorted, null, 2), "utf8");
     await message.reply({
       content: `**${sorted.length} entries** (${categorySummary}) — ${confidenceSummary} confidence`,
-      files: [{ attachment: buf, name: "lore.json" }],
+      files: [{ attachment: buf, name: "memory.json" }],
     });
     return;
   }
 
-  // Handle "forget: X" — remove lore entries matching a keyword
+  // Handle "forget: X" — remove memory entries matching a keyword
   const forgetMatch = userMessage.match(/^forget:\s*(.+)/i);
   if (forgetMatch) {
     if (!isAdmin(message.author.id)) {
@@ -560,7 +560,7 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
     const keyword = forgetMatch[1].trim();
-    const { removed, entries: removedEntries } = await removeLore(keyword);
+    const { removed, entries: removedEntries } = await removeMemory(keyword);
     log(requestId, "lore_removed", { keyword, removed });
     if (removed === 0) {
       await message.reply(`I don't have anything about that.`);
@@ -571,7 +571,7 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  // Handle "read: <url>" — fetch a URL and extract facts into lore (admin only)
+  // Handle "read: <url>" — fetch a URL and extract facts into memory (admin only)
   const readMatch = userMessage.match(/^read:\s*(https?:\/\/\S+)/i);
   if (readMatch) {
     if (!isAdmin(message.author.id)) {
@@ -609,13 +609,13 @@ client.on(Events.MessageCreate, async (message) => {
         return;
       }
 
-      // Store each fact as a permanent lore entry
+      // Store each fact as a permanent memory entry
       let added = 0;
       let skipped = 0;
       const sampleFacts = [];
 
       for (const fact of facts) {
-        const result = await addLore(fact, senderName, { source: "url-import", sourceUrl: url });
+        const result = await addMemory(fact, senderName, { source: "url-import", sourceUrl: url });
         log(requestId, "url_fact_store", { fact: fact.slice(0, 80), action: result.action });
         if (result.action === "added" || result.action === "split") {
           added++;
@@ -637,7 +637,7 @@ client.on(Events.MessageCreate, async (message) => {
       log(requestId, "url_read_complete", { url, pageTitle, added, skipped, total: facts.length });
 
       // Embed new entries in background
-      embedPendingLore().catch(() => {});
+      embedPendingMemory().catch(() => {});
     } catch (err) {
       clearInterval(typingInterval);
       log(requestId, "url_read_error", { url, message: err.message });
@@ -694,9 +694,9 @@ client.on(Events.MessageCreate, async (message) => {
     const retrievalQuery = userMessage || conversationContext || "reacting to an image";
 
     const t1 = Date.now();
-    const [results, loreWindows, aggressionClassification] = await Promise.all([
+    const [results, contextWindows, aggressionClassification] = await Promise.all([
       retrieve(retrievalQuery, 5, conversationContext, recentExampleIds),
-      loreSearch(retrievalQuery, 3, 4, persona.nameVariants),
+      windowSearch(retrievalQuery, 3, 4, persona.nameVariants),
       classifyAggression(userMessage, conversationContext),
     ]);
     trackExamples(results.map((r) => r.id));
@@ -711,17 +711,17 @@ client.on(Events.MessageCreate, async (message) => {
 
     log(requestId, "retrieval_complete", {
       ragResults: results.length,
-      loreWindows: loreWindows.length,
+      contextWindows: contextWindows.length,
       ms: t2 - t1,
     });
 
     // Retrieve relevant memories + directives + discord examples
-    const [loreResult, directives, discordExamples] = await Promise.all([
-      retrieveLore(retrievalQuery, 8),
+    const [memoryResult, directives, discordExamples] = await Promise.all([
+      retrieveMemory(retrievalQuery, 8),
       Promise.resolve(getDirectives()),
       retrieveDiscord(retrievalQuery, 3),
     ]);
-    const { memories: retrievedMemories, personProfile } = loreResult;
+    const { memories: retrievedMemories, personProfile } = memoryResult;
     log(requestId, "memory_retrieved", { memories: retrievedMemories.length, profile: personProfile?.person ?? null, directives: directives.length, discordExamples: discordExamples.length });
 
     // Extract the last few bot replies to discourage repetition
@@ -734,7 +734,7 @@ client.on(Events.MessageCreate, async (message) => {
       ? `${senderName} just said something to you directly. This is a back-and-forth — engage with what they actually said. Respond to the specific thing, push back, ask something, keep the thread going. Don't just react to the topic and drop it.`
       : null;
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, loreWindows, recentBotReplies, retrievedMemories, directives, discordExamples, personProfile, aggression, persona.name, crossTalkHint);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, contextWindows, recentBotReplies, retrievedMemories, directives, discordExamples, personProfile, aggression, persona.name, crossTalkHint);
 
     log(requestId, "generating", { aggressive: !!aggression });
     const t3 = Date.now();
@@ -763,8 +763,8 @@ client.on(Events.MessageCreate, async (message) => {
     if (aggression) decrementAggression(message.channel.id);
 
     // Background work — none of this blocks the reply
-    // Embed any pending lore + discord entries (moved out of main path)
-    embedPendingLore().catch(() => {});
+    // Embed any pending memory + discord entries (moved out of main path)
+    embedPendingMemory().catch(() => {});
     embedPendingDiscord().catch(() => {});
 
     // Implicit extraction — in home channel the bot responds to everything so always extract from context.
@@ -783,13 +783,13 @@ client.on(Events.MessageCreate, async (message) => {
         directives: directives.map((e) => e.text),
         memories: retrievedMemories.map((e) => e.text),
         person_profile: personProfile ? { person: personProfile.person, memories: personProfile.memories.map((e) => e.text) } : null,
-        corpus_windows: loreWindows.map((w) => w.text),
+        corpus_windows: contextWindows.map((w) => w.text),
         discord_examples: discordExamples.map((e) => e.response),
         rag_examples: results.map((r) => r.response),
       };
       const buf = Buffer.from(JSON.stringify(debugData, null, 2), "utf8");
       await message.channel.send({
-        content: `**[debug]** directives:${directives.length} facts:${retrievedFacts.length} corpus:${loreWindows.length} discord:${discordExamples.length} rag:${results.length}`,
+        content: `**[debug]** directives:${directives.length} facts:${retrievedFacts.length} corpus:${contextWindows.length} discord:${discordExamples.length} rag:${results.length}`,
         files: [{ attachment: buf, name: "debug.json" }],
       });
     }
