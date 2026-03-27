@@ -33,10 +33,14 @@ function getQueue() {
 export async function publishInferredMemory(personaId, facts, conversationId) {
   const q = getQueue();
   if (!q) return;
-  await q.add("inferred", {
-    persona_id: personaId,
-    facts,
-    conversation_id: conversationId,
-    added_at: new Date().toISOString(),
-  });
+  await q.add(
+    "inferred",
+    {
+      persona_id: personaId,
+      facts,
+      conversation_id: conversationId,
+      added_at: new Date().toISOString(),
+    },
+    { attempts: 2, backoff: { type: "exponential", delay: 5000 } }
+  );
 }

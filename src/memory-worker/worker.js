@@ -12,7 +12,10 @@
 import "dotenv/config";
 import Redis from "ioredis";
 import { Worker } from "bullmq";
+import Redlock from "redlock";
 import { getPool } from "../rag/db-client.js";
+import { reconcile } from "../rag/reconcile.js";
+import { runDecay, runPruning } from "./maintenance.js";
 
 const QUEUE_NAME = "memory-inferred";
 
@@ -30,6 +33,11 @@ const pool = getPool();
 
 // BullMQ requires maxRetriesPerRequest: null for blocking commands
 const connection = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null });
+
+// Separate client for Redlock — standard retry behavior, not BullMQ-specific
+const lockClient = new Redis(process.env.REDIS_URL);
+const redlock = new Redlock([lockClient], { retryCount: 0 });
+const LOCK_TTL_MS = 60_000;
 
 const worker = new Worker(
   QUEUE_NAME,
@@ -69,12 +77,21 @@ const worker = new Worker(
       total: facts.length,
     }));
 
-    // Reconciliation stub — full logic in Feature #6
-    console.log(JSON.stringify({
-      ts: new Date().toISOString(),
-      stage: "reconciliation_triggered",
-      persona_id,
-    }));
+    if (inserted > 0) {
+      const lockKey = `reconcile:${persona_id}`;
+      let lock;
+      try {
+        lock = await redlock.acquire([lockKey], LOCK_TTL_MS);
+      } catch {
+        console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "reconcile_locked", persona_id }));
+        return; // another worker is already reconciling this persona
+      }
+      try {
+        await reconcile(persona_id);
+      } finally {
+        await lock.release().catch(() => {});
+      }
+    }
   },
   { connection, concurrency: 1 }
 );
@@ -89,10 +106,19 @@ worker.on("failed", (job, err) => {
 
 console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "worker_started", queue: QUEUE_NAME }));
 
+// Daily pruning: delete expired + stale memories
+const PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+setInterval(() => runPruning(), PRUNE_INTERVAL_MS);
+
+// Weekly decay: reduce confidence on bot-inferred memories not recently accessed
+const DECAY_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+setInterval(() => runDecay(), DECAY_INTERVAL_MS);
+
 async function shutdown() {
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "worker_shutting_down" }));
   await worker.close();
   await pool.end();
+  lockClient.disconnect();
   process.exit(0);
 }
 

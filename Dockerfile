@@ -28,8 +28,6 @@ CMD ["sh", "-c", "\
   mkdir -p /app/data && mkdir -p /app/data/personas/$P && \
   cp -n /app/data-src/corpus.enc /app/data/corpus.enc && \
   cp -n /app/data-src/personas/$P/enriched.enc /app/data/personas/$P/enriched.enc 2>/dev/null; \
-  cp -n /app/data-src/personas/$P/memory.enc /app/data/personas/$P/memory.enc 2>/dev/null; \
-  node /app/src/rag/merge-memory.js && \
   if [ ! -d /app/data/personas/$P/index-pair ] || [ ! -d /app/data/personas/$P/index-window ]; then \
     echo \"Indexes not found for $P — building (this takes a few minutes)...\" && \
     cd /app && node --max-old-space-size=4096 src/rag/index.js && \
