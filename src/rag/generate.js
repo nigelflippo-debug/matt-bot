@@ -30,7 +30,7 @@ function formatExamples(results) {
  * Inserts before "## Final Instruction" so the static examples and retrieved
  * examples are both present.
  */
-export function buildSystemPrompt(basePrompt, results, contextWindows = [], recentBotReplies = [], retrievedMemories = [], directives = [], discordExamples = [], personProfile = null, aggression = null, personaName = "Matt", crossTalkHint = null) {
+export function buildSystemPrompt(basePrompt, results, contextWindows = [], recentBotReplies = [], retrievedMemories = [], directives = [], discordExamples = [], personProfile = null, aggression = null, personaName = "Matt", crossTalkHint = null, bitContext = null) {
   let injection = "";
 
   // Directives: behavioral rules the group has set — always inject.
@@ -165,8 +165,22 @@ ${crossTalkHint}
 `;
   }
 
-  // Aggression block — injected last for maximum model attention
-  if (aggression) {
+  // Bit block — group riffing takes priority over solo aggression
+  if (bitContext) {
+    const energy = bitContext.step <= 2
+      ? "It's fresh — go hard, be funny, escalate."
+      : "It's been going — land a punchline or wind it down.";
+    injection += `## YOU'RE IN A BIT RIGHT NOW
+
+The group is riffing on: ${bitContext.hook}
+
+You and the other guys are doing a bit — someone said something funny and everyone's piling on. Riff on the specific thing (${bitContext.hook}). Build on what was just said — yes-and it, escalate it, call back to it. Keep it punchy and short. ${energy}
+
+---
+
+`;
+  } else if (aggression) {
+    // Aggression block — injected last for maximum model attention
     injection += `## AGGRESSION ACTIVE
 
 You are fired up about ${aggression.topic}. This is a topic that genuinely pisses you off. Respond with clear frustration, anger, and indignation. You're not performing anger — you're actually heated. Be aggressive, confrontational, and unapologetic. Rant if you need to. Don't hold back, don't hedge, don't be diplomatic. Stay in character as ${personaName} — this is how ${personaName} sounds when they're pissed off. No fake politeness, no "I see your point." You're mad and you're letting them know it.

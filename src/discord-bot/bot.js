@@ -16,6 +16,7 @@ import { logPersonaMessage, embedPendingDiscord, retrieveDiscord } from "../rag/
 import { loadEncryptedText } from "../rag/crypto-utils.js";
 import { readUrl } from "../rag/url-reader.js";
 import { classifyAggression } from "../rag/aggression.js";
+import { classifyBit } from "../rag/bit-detection.js";
 import { initAffinity, scoreMessage, getDelayMs } from "../rag/topic-affinity.js";
 import { getPersona } from "../persona/loader.js";
 import { getRedis } from "../rag/redis-client.js";
@@ -359,24 +360,61 @@ process.on("unhandledRejection", (reason) => {
 });
 
 client.on(Events.MessageCreate, async (message) => {
+  // Determine home channel early — needed for bit state before bot-message gating
+  const inHomeChannel = message.channel.name === persona.homeChannel;
+
+  // Read active bit state from Redis (needed for depth-limit relaxation below)
+  let activeBit = null;
+  if (inHomeChannel) {
+    const redis = getRedis();
+    if (redis) {
+      try {
+        const data = await redis.hgetall(`bit:channel:${message.channel.id}`);
+        if (data && data.step) activeBit = data;
+      } catch {}
+    }
+  }
+
+  // Human interrupt — any human message in home channel kills an active bit
+  if (!message.author.bot && inHomeChannel) {
+    const redis = getRedis();
+    if (redis) redis.del(`bit:channel:${message.channel.id}`).catch(() => {});
+    activeBit = null;
+  }
+
   if (message.author.bot) {
     // Never respond to ourselves
     if (message.author.id === client.user?.id) return;
     // Outside home channel: ignore all bots
-    if (message.channel.name !== persona.homeChannel) return;
-    // Only respond one level deep — if this bot message is itself a reply to another bot, bail.
-    // Prevents infinite chains while still allowing human → bot → bot exchanges.
+    if (!inHomeChannel) return;
+    // Depth limit — if this bot message is itself a reply to another bot, bail.
+    // Exception: during an active bit, allow deeper chains (decay math gates the response).
     if (message.reference?.messageId) {
       try {
         const parent = await message.channel.messages.fetch(message.reference.messageId);
-        if (parent.author.bot) return;
+        if (parent.author.bot && !activeBit) return;
       } catch {
         // If we can't fetch the parent, bail to be safe
         return;
       }
     }
-    // 25% chance to respond to a bot message
-    if (Math.random() >= BOT_RESPONSE_CHANCE) return;
+    // Bit decay math replaces flat BOT_RESPONSE_CHANCE during active bits
+    if (activeBit) {
+      const step = parseInt(activeBit.step, 10);
+      if (step >= 6) {
+        const redis = getRedis();
+        if (redis) redis.del(`bit:channel:${message.channel.id}`).catch(() => {});
+        return;
+      }
+      const p = 0.85 * Math.pow(0.45, step - 1);
+      if (Math.random() >= p) {
+        log(message.id.slice(-6), "bit_decay_bail", { step, p: p.toFixed(3) });
+        return;
+      }
+    } else {
+      // No active bit — 25% chance to respond to a bot message
+      if (Math.random() >= BOT_RESPONSE_CHANCE) return;
+    }
     // Fall through — respond to this bot message
   }
 
@@ -388,8 +426,6 @@ client.on(Events.MessageCreate, async (message) => {
     runChippleMeltdown(message.channel).catch(() => {});
     return;
   }
-
-  const inHomeChannel = message.channel.name === persona.homeChannel;
   const botMentioned = message.mentions.has(client.user);
   const onlyOthersMentioned = message.mentions.users.size > 0 && !botMentioned;
 
@@ -425,8 +461,9 @@ client.on(Events.MessageCreate, async (message) => {
     if (redis) {
       try {
         // 1. Topic routing — delay before claiming so high-affinity bots win the race
+        //    Skip during active bits — decay math already gated the response
         let affinityScore = 0;
-        if (!message.author.bot) {
+        if (!activeBit && !message.author.bot) {
           affinityScore = scoreMessage(message.content);
           const delay = getDelayMs(affinityScore);
           if (delay > 0) await new Promise((r) => setTimeout(r, delay));
@@ -445,8 +482,8 @@ client.on(Events.MessageCreate, async (message) => {
         }
         log(message.id.slice(-6), "coord_claim", { won: true });
 
-        // 3. Winner rolls response chance — intentional silence 40% of the time
-        if (!message.author.bot && Math.random() >= HOME_CHANNEL_RESPONSE_CHANCE) return;
+        // 3. Winner rolls response chance — skip during bits (decay already gated)
+        if (!activeBit && !message.author.bot && Math.random() >= HOME_CHANNEL_RESPONSE_CHANCE) return;
       } catch (err) {
         log(message.id.slice(-6), "coord_error", { message: err.message });
       }
@@ -680,10 +717,13 @@ client.on(Events.MessageCreate, async (message) => {
     const retrievalQuery = userMessage || conversationContext || "reacting to an image";
 
     const t1 = Date.now();
-    const [results, contextWindows, aggressionClassification] = await Promise.all([
+    const [results, contextWindows, aggressionClassification, bitClassification] = await Promise.all([
       retrieve(retrievalQuery, 5, conversationContext, recentExampleIds),
       windowSearch(retrievalQuery, 3, 4, persona.nameVariants),
       classifyAggression(userMessage, conversationContext, persona.aggressionTopics ?? []),
+      message.author.bot && !activeBit
+        ? classifyBit(userMessage, conversationContext)
+        : Promise.resolve({ isBit: false, hook: null }),
     ]);
     trackExamples(results.map((r) => r.id));
     const t2 = Date.now();
@@ -694,6 +734,46 @@ client.on(Events.MessageCreate, async (message) => {
       log(requestId, "aggression_triggered", { topic: aggressionClassification.topic });
     }
     const aggression = getAggression(message.channel.id);
+
+    // Bit state — join existing bit or start a new one
+    let bitContext = null;
+    try {
+      const redis = getRedis();
+      if (activeBit && redis) {
+        // Join existing bit — increment step
+        await redis.hincrby(`bit:channel:${message.channel.id}`, "step", 1);
+        const participants = activeBit.participants || "";
+        if (!participants.split(",").includes(persona.id)) {
+          await redis.hset(`bit:channel:${message.channel.id}`, "participants", participants + "," + persona.id);
+        }
+        bitContext = { hook: activeBit.topic, step: parseInt(activeBit.step, 10) + 1 };
+        log(requestId, "bit_joined", { hook: bitContext.hook, step: bitContext.step });
+      } else if (bitClassification.isBit && redis) {
+        // Start new bit — HSETNX as atomic creation gate
+        const created = await redis.hsetnx(`bit:channel:${message.channel.id}`, "step", "1");
+        if (created) {
+          await redis.hmset(`bit:channel:${message.channel.id}`, {
+            topic: bitClassification.hook,
+            originMessageId: message.id,
+            originBotId: message.author.id,
+            participants: persona.id,
+            startedAt: Date.now().toString(),
+          });
+          await redis.expire(`bit:channel:${message.channel.id}`, 120);
+          bitContext = { hook: bitClassification.hook, step: 1 };
+        } else {
+          // Another bot beat us — read the existing state and join
+          const existing = await redis.hgetall(`bit:channel:${message.channel.id}`);
+          if (existing?.topic) {
+            await redis.hincrby(`bit:channel:${message.channel.id}`, "step", 1);
+            bitContext = { hook: existing.topic, step: parseInt(existing.step, 10) + 1 };
+          }
+        }
+        if (bitContext) log(requestId, "bit_started", { hook: bitContext.hook, step: bitContext.step });
+      }
+    } catch (err) {
+      log(requestId, "bit_state_error", { message: err.message });
+    }
 
     log(requestId, "retrieval_complete", {
       ragResults: results.length,
@@ -720,12 +800,12 @@ client.on(Events.MessageCreate, async (message) => {
       ? `${senderName} just said something to you directly. This is a back-and-forth — engage with what they actually said. Respond to the specific thing, push back, ask something, keep the thread going. Don't just react to the topic and drop it.`
       : null;
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, contextWindows, recentBotReplies, retrievedMemories, directives, discordExamples, personProfile, aggression, persona.name, crossTalkHint);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, contextWindows, recentBotReplies, retrievedMemories, directives, discordExamples, personProfile, aggression, persona.name, crossTalkHint, bitContext);
 
-    log(requestId, "generating", { aggressive: !!aggression });
+    log(requestId, "generating", { aggressive: !!aggression, bit: !!bitContext });
     const t3 = Date.now();
     const userContent = userMessage ? `${senderName}: ${userMessage}` : `${senderName} sent an image.`;
-    const genOverrides = aggression ? { max_tokens: 600, temperature: 1.3 } : {};
+    const genOverrides = bitContext ? { temperature: 1.0 } : aggression ? { max_tokens: 600, temperature: 1.3 } : {};
     const reply = await generate(systemPrompt, history, userContent, imageUrls, genOverrides);
     const t4 = Date.now();
 
@@ -739,8 +819,8 @@ client.on(Events.MessageCreate, async (message) => {
     await message.reply(reply);
     log(requestId, "replied");
 
-    // Decrement aggression counter after each bot reply
-    if (aggression) decrementAggression(message.channel.id);
+    // Decrement aggression counter after each bot reply (skip during bits — bit takes priority)
+    if (aggression && !bitContext) decrementAggression(message.channel.id);
 
     // Background work — none of this blocks the reply
     embedPendingDiscord().catch(() => {});
