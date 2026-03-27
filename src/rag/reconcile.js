@@ -15,9 +15,12 @@
 
 import OpenAI from "openai";
 import { getPool } from "./db-client.js";
-import { coalesce, checkContradiction, detectTemporalExpiry } from "./memory-store.js";
 
 const openai = new OpenAI();
+
+// ---------------------------------------------------------------------------
+// Embedding helpers (inlined — no persona-loader dependency)
+// ---------------------------------------------------------------------------
 
 function toVectorLiteral(embedding) {
   return `[${embedding.join(",")}]`;
@@ -26,6 +29,118 @@ function toVectorLiteral(embedding) {
 async function embedText(text) {
   const res = await openai.embeddings.create({ model: "text-embedding-3-small", input: [text] });
   return toVectorLiteral(res.data[0].embedding);
+}
+
+// ---------------------------------------------------------------------------
+// LLM helpers (inlined from memory-store.js — no persona-loader dependency)
+// ---------------------------------------------------------------------------
+
+const COALESCE_SYSTEM = `You manage a compact fact store. Given an existing list of facts and a new candidate fact, decide what to do.
+
+Respond with a JSON object — no markdown, no explanation, just the JSON:
+
+If the new fact is already fully covered by an existing entry, return the index (0-based) of that entry:
+{"action":"skip","index":<n>}
+
+If the new fact updates, corrects, or extends an existing entry, return the index (0-based) of that entry and the merged replacement text:
+{"action":"merge","index":<n>,"merged":"<full replacement text>"}
+
+If the new fact is genuinely new information not covered by any existing entry:
+{"action":"add"}
+
+Rules:
+- Prefer merging over adding when the topic overlaps at all
+- The merged text should be a single clean sentence or phrase, no longer than the longer of the two inputs
+- Do not invent details not present in either entry`;
+
+async function coalesce(newFact, entries) {
+  if (entries.length === 0) return { action: "add" };
+  const existingList = entries.map((e, i) => `${i}: ${e.text}`).join("\n");
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: COALESCE_SYSTEM },
+      { role: "user", content: `EXISTING FACTS:\n${existingList}\n\nNEW FACT:\n${newFact}` },
+    ],
+  });
+  try {
+    return JSON.parse(response.choices[0].message.content);
+  } catch {
+    return { action: "add" };
+  }
+}
+
+const CONTRADICTION_SYSTEM = `You manage a fact store. Given a new fact and a list of existing facts, identify if any existing fact directly contradicts the new fact — meaning both cannot be true at the same time.
+
+Do NOT flag facts that are similar, overlapping, complementary, or just updates. Only flag true logical contradictions.
+
+Examples of contradictions:
+- "Nigel lives in Seattle" vs "Nigel lives in Boston" ✓
+- "Dave is coming to the game" vs "Dave is not coming to the game" ✓
+
+Not contradictions:
+- "Nigel went to Vermont last year" vs "Nigel is going to Vermont next month" (different times)
+- "Dave likes golf" vs "Dave is bad at golf" (can both be true)
+
+Return JSON only:
+{"contradicts": true, "index": <n>}   — if existing fact at index n directly contradicts the new fact
+{"contradicts": false}                 — if no contradiction exists`;
+
+async function checkContradiction(newFact, candidates) {
+  if (candidates.length === 0) return { contradicts: false };
+  const list = candidates.map((e, i) => `${i}: ${e.text}`).join("\n");
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: CONTRADICTION_SYSTEM },
+        { role: "user", content: `EXISTING FACTS:\n${list}\n\nNEW FACT:\n${newFact}` },
+      ],
+    });
+    return JSON.parse(response.choices[0].message.content);
+  } catch {
+    return { contradicts: false };
+  }
+}
+
+function detectTemporalExpiry(text, now = new Date()) {
+  const t = text.toLowerCase();
+  if (/\b(for now|temporarily|just for now|for the time being)\b/.test(t)) {
+    return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  }
+  if (/\b(today|tonight|this morning|this afternoon|this evening)\b/.test(t)) {
+    const end = new Date(now); end.setHours(23, 59, 59, 999); return end.toISOString();
+  }
+  if (/\btomorrow\b/.test(t)) {
+    const end = new Date(now); end.setDate(end.getDate() + 1); end.setHours(23, 59, 59, 999); return end.toISOString();
+  }
+  if (/\bthis weekend\b/.test(t)) {
+    const end = new Date(now); end.setDate(end.getDate() + ((7 - end.getDay()) % 7 || 7)); end.setHours(23, 59, 59, 999); return end.toISOString();
+  }
+  if (/\bthis week\b/.test(t)) {
+    const end = new Date(now); end.setDate(end.getDate() + ((7 - end.getDay()) % 7 || 7)); end.setHours(23, 59, 59, 999); return end.toISOString();
+  }
+  if (/\bnext week\b/.test(t)) {
+    const end = new Date(now); end.setDate(end.getDate() + ((7 - end.getDay()) % 7 || 7) + 7); end.setHours(23, 59, 59, 999); return end.toISOString();
+  }
+  if (/\bthis month\b/.test(t)) {
+    return new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+  }
+  if (/\bnext month\b/.test(t)) {
+    return new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59, 999).toISOString();
+  }
+  if (/\bnext year\b/.test(t)) {
+    return new Date(now.getFullYear() + 1, 11, 31, 23, 59, 59, 999).toISOString();
+  }
+  const inDays = t.match(/\bin (\d+) days?\b/);
+  if (inDays) {
+    const end = new Date(now); end.setDate(end.getDate() + parseInt(inDays[1])); end.setHours(23, 59, 59, 999); return end.toISOString();
+  }
+  return null;
 }
 
 const SIM_DUPLICATE  = 0.95;
