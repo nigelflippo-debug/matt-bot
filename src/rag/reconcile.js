@@ -16,9 +16,17 @@
 import OpenAI from "openai";
 import { getPool } from "./db-client.js";
 import { coalesce, checkContradiction, detectTemporalExpiry } from "./memory-store.js";
-import { embedText } from "./memory-store-pg.js";
 
 const openai = new OpenAI();
+
+function toVectorLiteral(embedding) {
+  return `[${embedding.join(",")}]`;
+}
+
+async function embedText(text) {
+  const res = await openai.embeddings.create({ model: "text-embedding-3-small", input: [text] });
+  return toVectorLiteral(res.data[0].embedding);
+}
 
 const SIM_DUPLICATE  = 0.95;
 const SIM_AMBIGUOUS  = 0.70;
