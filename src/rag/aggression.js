@@ -9,19 +9,10 @@ import OpenAI from "openai";
 
 const client = new OpenAI();
 
-const PROVOCATION_TOPICS = [
-  "New York City",
-  "George Washington",
-  "Boston racism",
-  "Israel",
-  "Joe Biden",
-  "Hillary Clinton",
-  "Hunter Biden",
-];
+function buildClassificationPrompt(topics) {
+  return `You are a topic classifier. Given a message and optional conversation context, determine if the message touches ANY of these topics — directly or indirectly:
 
-const CLASSIFICATION_PROMPT = `You are a topic classifier. Given a message and optional conversation context, determine if the message touches ANY of these topics — directly or indirectly:
-
-${PROVOCATION_TOPICS.map((t) => `- ${t}`).join("\n")}
+${topics.map((t) => `- ${t}`).join("\n")}
 
 Indirect references count. Examples:
 - "the city" or "Manhattan" → New York City
@@ -33,15 +24,18 @@ Respond with ONLY valid JSON, no other text:
 {"triggered": true, "topic": "the matched topic"}
 or
 {"triggered": false, "topic": null}`;
+}
 
 /**
  * Classify whether a message touches a provocation topic.
  *
  * @param {string} userMessage - the incoming message text
  * @param {string} conversationContext - recent prior messages for reference resolution
+ * @param {string[]} topics - persona-specific list of provocation topics
  * @returns {Promise<{triggered: boolean, topic: string|null}>}
  */
-export async function classifyAggression(userMessage, conversationContext = "") {
+export async function classifyAggression(userMessage, conversationContext = "", topics = []) {
+  if (topics.length === 0) return { triggered: false, topic: null };
   try {
     const contextBlock = conversationContext
       ? `Recent conversation:\n${conversationContext}\n\nNew message: ${userMessage}`
@@ -52,7 +46,7 @@ export async function classifyAggression(userMessage, conversationContext = "") 
       max_tokens: 50,
       temperature: 0,
       messages: [
-        { role: "system", content: CLASSIFICATION_PROMPT },
+        { role: "system", content: buildClassificationPrompt(topics) },
         { role: "user", content: contextBlock },
       ],
     });

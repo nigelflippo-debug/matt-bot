@@ -125,7 +125,7 @@ function getAggression(channelId) {
 }
 
 function triggerAggression(channelId, topic) {
-  const replies = Math.random() < 0.5 ? 2 : 3;
+  const replies = Math.random() < 0.5 ? 4 : 5;
   aggressionState.set(channelId, { topic, remainingReplies: replies });
 }
 
@@ -693,7 +693,7 @@ client.on(Events.MessageCreate, async (message) => {
     const [results, contextWindows, aggressionClassification] = await Promise.all([
       retrieve(retrievalQuery, 5, conversationContext, recentExampleIds),
       windowSearch(retrievalQuery, 3, 4, persona.nameVariants),
-      classifyAggression(userMessage, conversationContext),
+      classifyAggression(userMessage, conversationContext, persona.aggressionTopics ?? []),
     ]);
     trackExamples(results.map((r) => r.id));
     const t2 = Date.now();
@@ -735,7 +735,7 @@ client.on(Events.MessageCreate, async (message) => {
     log(requestId, "generating", { aggressive: !!aggression });
     const t3 = Date.now();
     const userContent = userMessage ? `${senderName}: ${userMessage}` : `${senderName} sent an image.`;
-    const genOverrides = aggression ? { max_tokens: 500, temperature: 0.95 } : {};
+    const genOverrides = aggression ? { max_tokens: 600, temperature: 1.3 } : {};
     const reply = await generate(systemPrompt, history, userContent, imageUrls, genOverrides);
     const t4 = Date.now();
 
