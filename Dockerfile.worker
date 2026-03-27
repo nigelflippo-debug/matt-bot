@@ -1,0 +1,16 @@
+FROM node:20-slim
+
+WORKDIR /app
+
+# Install rag dependencies (shared modules used by the worker)
+COPY src/rag/package.json src/rag/package-lock.json* ./src/rag/
+RUN cd src/rag && npm ci --omit=dev
+
+# Install worker dependencies
+COPY src/memory-worker/package.json src/memory-worker/package-lock.json* ./src/memory-worker/
+RUN cd src/memory-worker && npm ci --omit=dev
+
+# Copy source
+COPY src/ ./src/
+
+CMD ["node", "src/memory-worker/worker.js"]
