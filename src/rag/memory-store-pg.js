@@ -96,31 +96,36 @@ export async function retrieveMemory(query, k = 5) {
   const others = scored.filter((r) => !r.person_name || !queryLower.includes(r.person_name.toLowerCase()));
   const memories = [...personMatches, ...others].slice(0, k);
 
-  // Entity profile: all memories tagged with the mentioned person (up to 15)
+  // Entity profile: use entities table for indexed person detection + summary injection
   let personProfile = null;
-  const { rows: knownPersons } = await pool.query(
-    `SELECT DISTINCT person_name FROM memories
-     WHERE persona_id = $1 AND person_name IS NOT NULL AND category = 'memory'`,
+  const { rows: knownEntities } = await pool.query(
+    `SELECT name, summary FROM entities
+     WHERE persona_id = $1
+     ORDER BY memory_count DESC`,
     [personaId]
   );
-  const mentionedPerson = knownPersons
-    .map((r) => r.person_name)
-    .find((name) => queryLower.includes(name.toLowerCase()));
+  const matchedEntity = knownEntities.find((e) => queryLower.includes(e.name.toLowerCase()));
 
-  if (mentionedPerson) {
-    const { rows: profileRows } = await pool.query(
-      `SELECT id, text, person_name, confidence, source, last_accessed_at, added_at
-       FROM memories
-       WHERE persona_id = $1
-         AND category = 'memory'
-         AND person_name ILIKE $2
-         AND (expires_at IS NULL OR expires_at > now())
-       ORDER BY last_accessed_at DESC NULLS LAST
-       LIMIT 15`,
-      [personaId, mentionedPerson]
-    );
-    if (profileRows.length > 0) {
-      personProfile = { person: mentionedPerson, memories: profileRows };
+  if (matchedEntity) {
+    if (matchedEntity.summary) {
+      // Use synthesised summary — cleaner injection, no raw rows needed
+      personProfile = { person: matchedEntity.name, summary: matchedEntity.summary, memories: [] };
+    } else {
+      // No summary yet — fall back to raw rows
+      const { rows: profileRows } = await pool.query(
+        `SELECT id, text, person_name, confidence, source, last_accessed_at, added_at
+         FROM memories
+         WHERE persona_id = $1
+           AND category = 'memory'
+           AND person_name ILIKE $2
+           AND (expires_at IS NULL OR expires_at > now())
+         ORDER BY last_accessed_at DESC NULLS LAST
+         LIMIT 15`,
+        [personaId, matchedEntity.name]
+      );
+      if (profileRows.length > 0) {
+        personProfile = { person: matchedEntity.name, summary: null, memories: profileRows };
+      }
     }
   }
 
@@ -386,7 +391,85 @@ async function addSingle(text, category, addedBy, person = null, opts = {}) {
   console.log(JSON.stringify({ ts: now.toISOString(), stage: "memory_added_pg", category, person, expiresAt, source, text: text.slice(0, 80) }));
   if (expiresAt) console.log(JSON.stringify({ ts: now.toISOString(), stage: "memory_temporal_pg", category, person, expiresAt, text: text.slice(0, 80) }));
 
+  // Upsert entity and trigger incremental summary rebuild every 3 new memories
+  if (person) {
+    upsertEntity(pool, personaId, person).then((count) => {
+      if (count % 3 === 0) {
+        rebuildEntitySummary(personaId, person).catch(() => {});
+      }
+    }).catch(() => {});
+  }
+
   return { action: "added", category, temporal: !!expiresAt };
+}
+
+// ---------------------------------------------------------------------------
+// Entity helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Upsert an entity row for a named person.
+ * Creates if new; increments memory_count if existing.
+ * Returns the updated memory_count so the caller can decide whether to rebuild.
+ */
+async function upsertEntity(pool, personaId, personName) {
+  const { rows } = await pool.query(
+    `INSERT INTO entities (persona_id, name)
+     VALUES ($1, $2)
+     ON CONFLICT (persona_id, name) DO UPDATE
+       SET memory_count = entities.memory_count + 1
+     RETURNING memory_count`,
+    [personaId, personName]
+  );
+  return rows[0]?.memory_count ?? 1;
+}
+
+/**
+ * Rebuild the LLM summary for a named entity.
+ * Fetches up to 30 memories tagged with that person and summarises them.
+ */
+export async function rebuildEntitySummary(personaId, personName) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT text FROM memories
+     WHERE persona_id = $1
+       AND person_name ILIKE $2
+       AND category = 'memory'
+       AND (expires_at IS NULL OR expires_at > now())
+     ORDER BY confidence DESC, last_accessed_at DESC NULLS LAST
+     LIMIT 30`,
+    [personaId, personName]
+  );
+  if (rows.length === 0) return;
+
+  const factList = rows.map((r) => `- ${r.text}`).join("\n");
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      max_tokens: 200,
+      messages: [
+        {
+          role: "system",
+          content: `You are summarising what a persona knows about a person in their friend group. Write 2–3 sentences covering who they are, key facts, and their relationship to the group. Be specific and factual — only include what's in the facts provided. Do not invent details.`,
+        },
+        {
+          role: "user",
+          content: `Person: ${personName}\n\nKnown facts:\n${factList}`,
+        },
+      ],
+    });
+    const summary = response.choices[0].message.content.trim();
+    await pool.query(
+      `UPDATE entities
+       SET summary = $1, summary_updated_at = now(), memory_count = $2
+       WHERE persona_id = $3 AND name ILIKE $4`,
+      [summary, rows.length, personaId, personName]
+    );
+    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "entity_summary_rebuilt", personaId, personName, memoryCount: rows.length }));
+  } catch (err) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "entity_summary_error", personaId, personName, error: err.message }));
+  }
 }
 
 // ---------------------------------------------------------------------------

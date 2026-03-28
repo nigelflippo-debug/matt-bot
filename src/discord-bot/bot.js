@@ -10,7 +10,7 @@ import { Client, Events, GatewayIntentBits, MessageFlags } from "discord.js";
 import { retrieve, windowSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
 import { extractImplicit, detectTemporalExpiry } from "../rag/memory-store.js";
-import { publishInferredMemory } from "../rag/queue-client.js";
+import { publishInferredMemory, publishEntityBackfill } from "../rag/queue-client.js";
 import { retrieveMemory, getDirectives, getAllMemory, addMemory, removeMemory } from "../rag/memory-store-pg.js";
 import { logPersonaMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 import { loadEncryptedText } from "../rag/crypto-utils.js";
@@ -335,6 +335,9 @@ client.once(Events.ClientReady, async (c) => {
   initAffinity(baseSystemPrompt, persona.nameVariants ?? []).catch(() => {});
 
   if (injectionConfig.enabled) scheduleInjection();
+
+  // Backfill entity summaries for any entities without one yet (idempotent)
+  publishEntityBackfill(persona.id).catch(() => {});
 });
 
 // Discord connection lifecycle events — log for diagnosing silent downtime

@@ -68,19 +68,26 @@ Problems:
 
 ## Tasks
 
-1. [ ] Migration 004: add `summary`, `summary_updated_at`, `memory_count` to `entities`
-2. [ ] `upsertEntity(personaId, personName)` — INSERT ON CONFLICT DO UPDATE memory_count++
-3. [ ] `rebuildEntitySummary(personaId, personName)` — fetch rows, LLM summarise, UPDATE entities
-4. [ ] Wire `addMemory()` to call upsertEntity; trigger async rebuild if `memory_count % 3 === 0`
-5. [ ] Update `retrieveMemory()` — entities lookup for detection; summary injection
-6. [ ] `rebuildStaleEntities(personaId)` in maintenance.js — rebuild all entities with no summary
-7. [ ] Run migration 004 in prod and trigger backfill
+1. [x] Migration 004: add `summary`, `summary_updated_at`, `memory_count` to `entities`
+2. [x] `upsertEntity(personaId, personName)` — INSERT ON CONFLICT DO UPDATE memory_count++
+3. [x] `rebuildEntitySummary(personaId, personName)` — fetch rows, LLM summarise, UPDATE entities
+4. [x] Wire `addMemory()` to call upsertEntity; trigger async rebuild if `memory_count % 3 === 0`
+5. [x] Update `retrieveMemory()` — entities lookup for detection; summary injection
+6. [x] `rebuildStaleEntities(personaId)` in maintenance.js + `rebuild-entities` worker job type
+7. [x] `publishEntityBackfill` in queue-client.js; triggered from bot ClientReady
+8. [ ] Run migration 004 in prod and trigger backfill (auto-triggers on next deploy)
 
 ## Dependencies
 
 - Features #1–4 complete (memories table, Postgres write path)
 
+## Rebuild Strategy
+
+- **Incremental rebuild** (after `addMemory()`) — inline async, fire-and-forget in bot process. Single entity, single LLM call, low volume. No need for durability.
+- **Backfill / bulk rebuild** — `rebuild-entities` BullMQ job type. Worker picks it up, iterates all entities with no summary (or stale summary). Durable and queued so it doesn't slam OpenAI if there are many entities to catch up.
+
+Summary prompt caps at 30 memory rows per entity — enough for a full picture without blowing the context window.
+
 ## Open Questions
 
-- Should summary rebuild happen inline async (fire-and-forget in bot process) or go through the BullMQ worker? Worker is cleaner but adds a new job type. Inline async is simpler and the rebuild is a single LLM call.
-- How many raw rows to cap the summary prompt at? (suggest: all rows, capped at 30 — summaries are generated from the full picture)
+_(none)_

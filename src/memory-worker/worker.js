@@ -15,7 +15,7 @@ import { Worker } from "bullmq";
 import Redlock from "redlock";
 import { getPool } from "../rag/db-client.js";
 import { reconcile } from "../rag/reconcile.js";
-import { runDecay, runPruning } from "./maintenance.js";
+import { runDecay, runPruning, rebuildStaleEntities } from "./maintenance.js";
 
 const QUEUE_NAME = "memory-inferred";
 
@@ -104,6 +104,29 @@ worker.on("failed", (job, err) => {
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "job_failed", jobId: job?.id, error: err.message }));
 });
 
+// Entity maintenance queue — handles backfill and bulk summary rebuilds
+const entityWorker = new Worker(
+  "entity-maintenance",
+  async (job) => {
+    const { type, persona_id } = job.data;
+    if (type === "rebuild-entities") {
+      if (!persona_id) throw new Error("rebuild-entities job missing persona_id");
+      await rebuildStaleEntities(persona_id);
+    } else {
+      throw new Error(`Unknown entity-maintenance job type: ${type}`);
+    }
+  },
+  { connection, concurrency: 1 }
+);
+
+entityWorker.on("completed", (job) => {
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "entity_job_completed", jobId: job.id }));
+});
+
+entityWorker.on("failed", (job, err) => {
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "entity_job_failed", jobId: job?.id, error: err.message }));
+});
+
 console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "worker_started", queue: QUEUE_NAME }));
 
 // Daily pruning: delete expired + stale memories
@@ -117,6 +140,7 @@ setInterval(() => runDecay(), DECAY_INTERVAL_MS);
 async function shutdown() {
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "worker_shutting_down" }));
   await worker.close();
+  await entityWorker.close();
   await pool.end();
   lockClient.disconnect();
   process.exit(0);

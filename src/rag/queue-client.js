@@ -11,7 +11,9 @@ import Redis from "ioredis";
 import { Queue } from "bullmq";
 
 const QUEUE_NAME = "memory-inferred";
+const ENTITY_QUEUE_NAME = "entity-maintenance";
 let queue = null;
+let entityQueue = null;
 
 function getQueue() {
   if (queue) return queue;
@@ -22,6 +24,14 @@ function getQueue() {
   return queue;
 }
 
+function getEntityQueue() {
+  if (entityQueue) return entityQueue;
+  if (!process.env.REDIS_URL) return null;
+  const conn = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null });
+  entityQueue = new Queue(ENTITY_QUEUE_NAME, { connection: conn });
+  return entityQueue;
+}
+
 /**
  * Publish extracted facts to the inferred memory queue.
  * The worker inserts them into memory_staging and triggers reconciliation.
@@ -30,6 +40,16 @@ function getQueue() {
  * @param {Array<{text: string, person: string|null}>} facts
  * @param {string} conversationId
  */
+/**
+ * Enqueue a backfill job to rebuild entity summaries with no summary yet.
+ * Runs in the worker via the entity-maintenance queue.
+ */
+export async function publishEntityBackfill(personaId) {
+  const q = getEntityQueue();
+  if (!q) return;
+  await q.add("rebuild-entities", { type: "rebuild-entities", persona_id: personaId });
+}
+
 export async function publishInferredMemory(personaId, facts, conversationId) {
   const q = getQueue();
   if (!q) return;

@@ -112,7 +112,9 @@ Vary your move. If you used a short quip last time, try a different angle this t
   // Memory injected last (before Final Instruction) for maximum model attention.
   // Entity profile: if a specific person was queried, inject all their memories first.
   if (personProfile) {
-    const profileText = personProfile.memories.map((e) => `- ${e.text}`).join("\n");
+    const profileText = personProfile.summary
+      ? personProfile.summary
+      : personProfile.memories.map((e) => `- ${e.text}`).join("\n");
     injection += `## What you know about ${personProfile.person}
 
 Everything you remember about them. Use this to ground any references to ${personProfile.person} — don't invent details beyond what's here.
