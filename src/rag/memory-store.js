@@ -177,7 +177,7 @@ Respond with JSON only — no markdown.`;
  * Classify and optionally split a text into categorized parts.
  * Returns an array of {text, category} objects.
  */
-async function splitOrClassify(text) {
+export async function splitOrClassify(text) {
   const VALID_CATEGORIES = new Set(["directive", "memory"]);
   try {
     const response = await openai.chat.completions.create({
@@ -225,7 +225,7 @@ Rules:
 - The merged text should be a single clean sentence or phrase, no longer than the longer of the two inputs
 - Do not invent details not present in either entry`;
 
-async function coalesce(newFact, entries) {
+export async function coalesce(newFact, entries) {
   if (entries.length === 0) return { action: "add" };
 
   const existingList = entries.map((e, i) => `${i}: ${e.text}`).join("\n");
@@ -270,7 +270,7 @@ Return JSON only:
 {"contradicts": true, "index": <n>}   — if existing fact at index n directly contradicts the new fact
 {"contradicts": false}                 — if no contradiction exists`;
 
-async function checkContradiction(newFact, candidates) {
+export async function checkContradiction(newFact, candidates) {
   if (candidates.length === 0) return { contradicts: false };
 
   const list = candidates.map((e, i) => `${i}: ${e.text}`).join("\n");
@@ -325,7 +325,7 @@ async function preFilterCandidates(text, candidates, n = 20) {
  * Detect temporal references in text and return an appropriate expiresAt ISO string.
  * Returns null if no temporal reference is found.
  */
-function detectTemporalExpiry(text, now = new Date()) {
+export function detectTemporalExpiry(text, now = new Date()) {
   const t = text.toLowerCase();
 
   // "for now" / "temporarily" — 7-day expiry (replaces the old "episodic" category)

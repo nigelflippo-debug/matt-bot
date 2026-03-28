@@ -9,7 +9,9 @@ import "dotenv/config";
 import { Client, Events, GatewayIntentBits, MessageFlags } from "discord.js";
 import { retrieve, windowSearch } from "../rag/retrieve.js";
 import { generate, buildSystemPrompt } from "../rag/generate.js";
-import { addMemory, removeMemory, getAllMemory, embedPendingMemory, retrieveMemory, getDirectives, pruneExpired, pruneStale, extractImplicit, addImplicit, attributePersons, deduplicateMemory } from "../rag/memory-store.js";
+import { extractImplicit, detectTemporalExpiry } from "../rag/memory-store.js";
+import { publishInferredMemory } from "../rag/queue-client.js";
+import { retrieveMemory, getDirectives, getAllMemory, addMemory, removeMemory } from "../rag/memory-store-pg.js";
 import { logPersonaMessage, embedPendingDiscord, retrieveDiscord } from "../rag/discord-log.js";
 import { loadEncryptedText } from "../rag/crypto-utils.js";
 import { readUrl } from "../rag/url-reader.js";
@@ -207,16 +209,13 @@ async function runImplicitExtraction(conversationContext, requestId, message) {
   try {
     const facts = await extractImplicit(conversationContext);
     log(requestId, "implicit_extract", { found: facts.length, facts: facts.map((f) => f.text.slice(0, 60)) });
-    let anyNew = false;
-    let anyTemporal = false;
-    const newFacts = [];
-    for (const fact of facts) {
-      const result = await addImplicit(fact.text, "bot-inferred", fact.person);
-      log(requestId, "implicit_store", { fact: fact.text.slice(0, 60), person: fact.person, action: result.action });
-      if (result.action === "added") { anyNew = true; newFacts.push(fact.text); }
-      if (result.temporal) anyTemporal = true;
-    }
-    if (anyNew) await message.react("🧠").catch(() => {});
+    if (facts.length === 0) return;
+
+    await publishInferredMemory(persona.id, facts, requestId);
+    log(requestId, "implicit_queued", { count: facts.length });
+
+    await message.react("🧠").catch(() => {});
+    const anyTemporal = facts.some((f) => detectTemporalExpiry(f.text) !== null);
     if (anyTemporal) await message.react("📅").catch(() => {});
 
   } catch (err) {
@@ -331,15 +330,9 @@ function scheduleInjection() {
 }
 
 client.once(Events.ClientReady, async (c) => {
-  const pruned = pruneExpired();
-  const stale = pruneStale();
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag, persona: persona.id, prunedExpired: pruned, prunedStale: stale }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "ready", tag: c.user.tag, persona: persona.id }));
   // Derive topic keywords from system prompt for claim delay routing
   initAffinity(baseSystemPrompt, persona.nameVariants ?? []).catch(() => {});
-  // Attribute person names to existing entries that predate person tagging — no-op after first run
-  attributePersons().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "attribute_persons_error", message: err.message })));
-  // Deduplicate legacy memory entries — no-op once store is clean
-  deduplicateMemory().catch((err) => console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "dedup_error", message: err.message })));
 
   if (injectionConfig.enabled) scheduleInjection();
 });
@@ -451,7 +444,6 @@ client.on(Events.MessageCreate, async (message) => {
         const passiveRequestId = `p_${message.id.slice(-6)}`;
         log(passiveRequestId, "passive_extract_trigger", { channel: message.channel.name, messages: buf.length });
         runImplicitExtraction(extractionContext, passiveRequestId, message, false).catch(() => {});
-        embedPendingMemory().catch(() => {});
       }
     }
   }
@@ -565,7 +557,7 @@ client.on(Events.MessageCreate, async (message) => {
 
   // Handle "list memory" — send all memory entries as a JSON file attachment
   if (/^list memory$/i.test(userMessage)) {
-    const entries = getAllMemory();
+    const entries = await getAllMemory();
     if (entries.length === 0) {
       await message.reply(`No memories stored yet.`);
       return;
@@ -669,8 +661,6 @@ client.on(Events.MessageCreate, async (message) => {
       await message.react("📖").catch(() => {});
       log(requestId, "url_read_complete", { url, pageTitle, added, skipped, total: facts.length });
 
-      // Embed new entries in background
-      embedPendingMemory().catch(() => {});
     } catch (err) {
       clearInterval(typingInterval);
       log(requestId, "url_read_error", { url, message: err.message });
@@ -833,8 +823,6 @@ client.on(Events.MessageCreate, async (message) => {
     if (aggression && !bitContext) decrementAggression(message.channel.id);
 
     // Background work — none of this blocks the reply
-    // Embed any pending memory + discord entries (moved out of main path)
-    embedPendingMemory().catch(() => {});
     embedPendingDiscord().catch(() => {});
 
     // Implicit extraction — in home channel the bot responds to everything so always extract from context.
