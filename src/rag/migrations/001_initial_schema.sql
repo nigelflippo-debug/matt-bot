@@ -8,7 +8,6 @@ CREATE TABLE IF NOT EXISTS entities (
   id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   persona_id  TEXT        NOT NULL,
   name        TEXT        NOT NULL,
-  aliases     JSONB       NOT NULL DEFAULT '[]',
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
