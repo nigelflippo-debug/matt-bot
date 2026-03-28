@@ -537,6 +537,19 @@ export async function removeMemory(query) {
   const ids = toRemove.map((e) => e.id);
   await pool.query(`DELETE FROM memories WHERE id = ANY($1::uuid[])`, [ids]);
 
+  // Clean up entity rows that no longer have any associated memories
+  await pool.query(
+    `DELETE FROM entities
+     WHERE persona_id = $1
+       AND NOT EXISTS (
+         SELECT 1 FROM memories m
+         WHERE m.persona_id = entities.persona_id
+           AND m.person_name = entities.name
+           AND m.category = 'memory'
+       )`,
+    [personaId]
+  );
+
   console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "memory_removed_pg", count: toRemove.length, ids }));
   return { removed: toRemove.length, entries: toRemove.map((e) => ({ id: e.id, text: e.text, category: e.category })) };
 }
