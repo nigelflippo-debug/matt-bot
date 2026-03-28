@@ -10,9 +10,9 @@ The bots are aware, involved, and think it's funny.
 
 1. **Corpus** — Years of WhatsApp messages are parsed, cleaned, and enriched with semantic situation descriptions per persona
 2. **RAG retrieval** — When someone @mentions a bot, the message is enriched via LLM, embedded, and matched against dual vector indexes (situation-based + conversational) to find the most relevant real replies
-3. **Memory store** — Each bot maintains a persistent memory of facts, directives, and observations about the friend group. Facts are extracted implicitly from conversations and can be taught explicitly via commands. A 3-strike reinforcement system promotes provisional facts to permanent ones.
+3. **Memory store** — Each bot maintains a persistent Postgres memory of facts, directives, and observations about the friend group. Facts are extracted implicitly from conversations and can be taught explicitly via commands. Entity profiles build LLM summaries of known people for richer context injection.
 4. **Redis coordination** — A shared Redis instance manages who responds. Each bot scores the message against its topic affinity (derived from its system prompt at startup), delays proportionally, then races to claim via atomic SET NX. Losing bots react with emoji and may pile on if the topic overlaps their interests.
-5. **Generation** — Retrieved examples, memories, conversation context, and a detailed persona prompt are assembled and sent to GPT-4o, which generates a response in the persona's voice
+5. **Generation** — Retrieved examples, memories, entity profiles, conversation context, and a detailed persona prompt are assembled and sent to GPT-4o, which generates a response in the persona's voice
 
 ## Architecture
 
@@ -46,24 +46,33 @@ Dual vector search (Vectra)
 Keyword search + humor-aware reranking
     |
     v
-Memory retrieval (facts, directives, entity profiles)
+Memory retrieval (Postgres + pgvector)
+    ├── Salience re-ranking: semantic score * 0.7 + access recency * 0.3
+    ├── Person boost: memories tagged with a name mentioned in the query
+    └── Entity profile: LLM summary for named person injected separately
     |
     v
-System prompt assembly (persona + examples + memories + context)
+System prompt assembly (persona + examples + memories + entity profile + context)
     |
     v
 Generation (gpt-4o) ──> Discord reply
 ```
 
 ```
-Implicit memory (parallel):
+Implicit memory (async path):
     Conversation messages
         |
         v
-    extractImplicit() ──> coalesce/dedup ──> 3-strike reinforcement ──> memory store
+    extractImplicit() ──> BullMQ queue ──> memory-worker
+        |
+        v
+    memory_staging ──> reconcile() ──> memories table
         |
         v
     Passive observation: non-home channels buffer 5 messages → background extraction
+
+Explicit memory (synchronous):
+    remember:/directive:/read: commands ──> Postgres directly
 ```
 
 ### Key components
@@ -73,16 +82,17 @@ Implicit memory (parallel):
 | Discord bot | `src/discord-bot/bot.js` | Event handling, command processing, context assembly, passive observation |
 | Retrieval | `src/rag/retrieve.js` | Query enrichment, dual-index search, humor-aware reranking |
 | Generation | `src/rag/generate.js` | System prompt builder, OpenAI generation, name prefix stripping |
-| Memory store | `src/rag/memory-store.js` | Persistent memory — facts, directives, implicit extraction, 3-strike reinforcement, decay |
+| Memory store (PG) | `src/rag/memory-store-pg.js` | Postgres reads + explicit writes, entity upsert + summary rebuild |
+| Memory store (helpers) | `src/rag/memory-store.js` | extractImplicit, splitOrClassify, coalesce, contradiction check |
+| Queue client | `src/rag/queue-client.js` | Publishes inferred-memory + entity-backfill jobs to BullMQ |
+| Memory worker | `src/memory-worker/worker.js` | BullMQ consumer — reconciles staged memories, Redlock |
+| Worker maintenance | `src/memory-worker/maintenance.js` | Daily pruning, weekly confidence decay, entity summary backfill |
 | Redis client | `src/rag/redis-client.js` | Cross-bot coordination singleton, graceful fallback if REDIS_URL unset |
 | Topic affinity | `src/rag/topic-affinity.js` | Startup keyword extraction + per-message scoring to inform claim delay |
 | Discord log | `src/rag/discord-log.js` | Logs real persona messages from Discord for ongoing learning |
 | URL reader | `src/rag/url-reader.js` | Fetch a URL, extract facts, store as background knowledge |
 | Encryption | `src/rag/crypto-utils.js` | AES-256-GCM encryption for sensitive content files |
 | Persona loader | `src/persona/loader.js` | Reads persona config from `personas/<id>/config.json` |
-| Indexing | `src/rag/index.js` | Startup: builds Vectra vector indexes if missing |
-| WhatsApp processor | `tools/whatsapp-processor/processor.ts` | One-time: parses WhatsApp exports into structured corpus |
-| Enrichment | `tools/enrich.js` | One-time: generates semantic descriptions for all corpus entries |
 
 ## Personas
 
@@ -90,9 +100,12 @@ Each persona is a separate Railway service with `PERSONA=<id>` set. Each has its
 
 - System prompt (biography, voice, style)
 - Enriched corpus filtered to that person's messages
-- Memory store, vector indexes
+- RAG vector indexes (on Railway volume)
+- Postgres memory isolated by `persona_id`
 - Voiced memory acknowledgment phrases (in-character responses when the bot notes something new)
 - Special behaviors gated behind `specialBehaviors` flags in config
+
+**Currently deployed:** matt, nic, reed, nigel
 
 ## Setup
 
@@ -102,17 +115,20 @@ Each persona is a separate Railway service with `PERSONA=<id>` set. Each has its
 - OpenAI API key
 - Discord bot token(s)
 - WhatsApp chat export(s)
+- Postgres with pgvector extension
+- Redis
 
 ### Environment variables
 
 ```
 DISCORD_TOKEN=your-discord-bot-token
 OPENAI_API_KEY=your-openai-api-key
-CONTENT_ENCRYPTION_KEY=64-char-hex-string
-PERSONA=yourpersona                   # persona ID to load (default: matt)
-REDIS_URL=redis://...                 # optional; enables cross-bot coordination
+DATABASE_URL=postgresql://...          # Postgres with pgvector
+REDIS_URL=redis://...                  # BullMQ queue + cross-bot coordination
+CONTENT_ENCRYPTION_KEY=64-char-hex    # AES-256-GCM key for encrypted data files
+PERSONA=yourpersona                    # persona ID to load (default: matt)
 <PERSONA>_DISCORD_USER_ID=...         # optional; enables real message logging for this persona
-SPAM_USER_ID=...                      # optional; rate-limits a specific user
+SPAM_USER_ID=...                       # optional; rate-limits a specific user
 ```
 
 Generate an encryption key:
@@ -141,26 +157,31 @@ cd tools && npm run encrypt
 2. Write `personas/<name>/system-prompt.md` with biography, voice, and style
 3. Run `cd tools && node pipeline.js --persona <name> --sender "Full Name"`
 4. Run `cd tools && npm run encrypt`
-5. Deploy a new Railway service with `PERSONA=<name>`
+5. Deploy a new Railway service with `PERSONA=<name>` and shared `DATABASE_URL` + `REDIS_URL`
 
 ### Deployment
 
-One Railway service per persona, each auto-deploying from `main`. All share a Redis plugin for coordination.
+One Railway service per persona + one shared memory-worker service, all auto-deploying from `main`.
+
+```
+Bot services:    Dockerfile        (one per persona, PERSONA env var set per service)
+Worker service:  Dockerfile.worker (single shared service, persona-agnostic)
+Postgres:        Railway managed   (shared, isolated by persona_id column)
+Redis:           Railway managed   (BullMQ queue + cross-bot Redis coordination)
+Volume:          Mounted on bots   (RAG vector indexes only — memory is in Postgres)
+```
 
 ```bash
-# Set env vars per service in Railway dashboard:
-#   DISCORD_TOKEN, OPENAI_API_KEY, CONTENT_ENCRYPTION_KEY, PERSONA, REDIS_URL
-
 git push origin main
 ```
 
-The Docker image stages encrypted data files and builds vector indexes on first boot if not present on the persistent volume.
+On first boot, each bot seeds encrypted data to the persistent volume and builds RAG indexes if missing.
 
 ## Bot commands
 
 | Command | Description |
 |---------|-------------|
-| `remember: <fact>` | Store a memory (trusted users: permanent; others: provisional) |
+| `remember: <fact>` | Store a memory (trusted users: permanent; others: goes through addLore) |
 | `remember for now: <fact>` | Store a memory with 7-day expiry |
 | `forget: <id>` | Remove a stored memory |
 | `list memory` | List all stored memories and directives |
@@ -172,12 +193,13 @@ The Docker image stages encrypted data files and builds vector indexes on first 
 Two categories: `memory` and `directive`.
 
 - **memory** — facts the bot knows: personal details, episodic observations, URL-extracted knowledge
-  - Permanent by default; `expiresAt` set for time-sensitive things ("for now", "tonight", etc.)
-  - Provisional facts require 3 sightings to be promoted to permanent (reinforcement system)
-  - Bot-inferred memories not accessed after 180 days are pruned at startup
-- **directive** — behavioral rules set by admins; always injected, never pruned
+  - Permanent by default; `expires_at` set for time-sensitive things ("for now", "tonight", etc.)
+  - Source weights: explicit=1.0, url-import=0.8, bot-inferred=0.6 (lower weight can't overwrite higher)
+  - Confidence decay: 10%/week for bot-inferred memories not accessed in 7+ days
+  - Pruning: daily delete of expired + never-accessed stale bot-inferred memories (>30 days)
+- **directive** — behavioral rules set by admins; always injected into every prompt, never pruned
 
-Entity profiles: when a query names a person, all memories tagged with that person are pulled as a consolidated block.
+**Entity profiles:** the `entities` table holds one LLM-generated summary per known person. When a query names a known person, their summary is injected as a dedicated block in the system prompt. Summaries rebuild incrementally every 3 new tagged memories.
 
 ## Privacy
 
