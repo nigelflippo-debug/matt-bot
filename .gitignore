@@ -49,3 +49,4 @@ chat-data/
 
 # OS
 .DS_Store
+data/lore.json
