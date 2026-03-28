@@ -58,6 +58,7 @@ function resolveSharedPaths() {
   };
 }
 
+
 function loadPersonaConfig(personaId) {
   // In production, persona configs are at /app/personas/<id>/config.json
   // Locally, at <projectRoot>/personas/<id>/config.json

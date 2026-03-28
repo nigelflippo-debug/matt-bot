@@ -46,3 +46,6 @@ When a message arrives, each persona scores it against their own topic affinity 
 
 ## Open Questions
 _(none — cleared to implement)_
+
+## Completed
+2026-03-25 — Keywords extracted via gpt-4o-mini at startup, cached in-process. Delay tiers: 0/400/1200ms. Affinity score logged per-message as `coord_affinity` for future observability. Init failure degrades to random claiming with no crash._
