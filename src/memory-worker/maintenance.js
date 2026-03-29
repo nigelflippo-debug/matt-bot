@@ -6,10 +6,8 @@
  * rebuildStaleEntities()  — one-time/on-demand: build summaries for entities with none
  */
 
-import OpenAI from "openai";
 import { getPool } from "../rag/db-client.js";
-
-const openai = new OpenAI();
+export { rebuildStaleEntities } from "../rag/entity-summary.js";
 
 /**
  * Decay confidence on bot-inferred memories not accessed in 7+ days.
@@ -58,66 +56,4 @@ export async function runPruning() {
   } catch (err) {
     console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "prune_stale_error", error: err.message }));
   }
-}
-
-/**
- * Rebuild summaries for all entities that have no summary yet.
- * Designed to run once after migration or on-demand via a worker job.
- */
-export async function rebuildStaleEntities(personaId) {
-  const pool = getPool();
-  const { rows: stale } = await pool.query(
-    `SELECT name FROM entities
-     WHERE persona_id = $1 AND summary IS NULL
-     ORDER BY memory_count DESC`,
-    [personaId]
-  );
-
-  if (stale.length === 0) {
-    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "entity_backfill_skip", personaId, reason: "all entities have summaries" }));
-    return;
-  }
-
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "entity_backfill_start", personaId, count: stale.length }));
-
-  for (const { name } of stale) {
-    const { rows } = await pool.query(
-      `SELECT text FROM memories
-       WHERE persona_id = $1
-         AND person_name ILIKE $2
-         AND category = 'memory'
-         AND (expires_at IS NULL OR expires_at > now())
-       ORDER BY confidence DESC, last_accessed_at DESC NULLS LAST
-       LIMIT 30`,
-      [personaId, name]
-    );
-    if (rows.length === 0) continue;
-
-    const factList = rows.map((r) => `- ${r.text}`).join("\n");
-    try {
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        temperature: 0,
-        max_tokens: 200,
-        messages: [
-          {
-            role: "system",
-            content: `You are summarising what a persona knows about a person in their friend group. Write 2–3 sentences covering who they are, key facts, and their relationship to the group. Be specific and factual — only include what's in the facts provided. Do not invent details.`,
-          },
-          { role: "user", content: `Person: ${name}\n\nKnown facts:\n${factList}` },
-        ],
-      });
-      const summary = response.choices[0].message.content.trim();
-      await pool.query(
-        `UPDATE entities SET summary = $1, summary_updated_at = now(), memory_count = $2
-         WHERE persona_id = $3 AND name ILIKE $4`,
-        [summary, rows.length, personaId, name]
-      );
-      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "entity_backfill_done", personaId, name, memoryCount: rows.length }));
-    } catch (err) {
-      console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "entity_backfill_error", personaId, name, error: err.message }));
-    }
-  }
-
-  console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "entity_backfill_complete", personaId, count: stale.length }));
 }

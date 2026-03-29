@@ -17,6 +17,9 @@ import OpenAI from "openai";
 import { getPool } from "./db-client.js";
 import { getPersona } from "../persona/loader.js";
 import { splitOrClassify, coalesce, checkContradiction, detectTemporalExpiry } from "./memory-store.js";
+import { buildEntitySummary, rebuildEntitySummary } from "./entity-summary.js";
+
+export { rebuildEntitySummary };
 
 const openai = new OpenAI();
 const personaId = getPersona().id;
@@ -395,7 +398,7 @@ async function addSingle(text, category, addedBy, person = null, opts = {}) {
   if (person) {
     upsertEntity(pool, personaId, person).then((count) => {
       if (count % 3 === 0) {
-        rebuildEntitySummary(personaId, person).catch(() => {});
+        buildEntitySummary(pool, personaId, person).catch(() => {});
       }
     }).catch(() => {});
   }
@@ -422,54 +425,6 @@ async function upsertEntity(pool, personaId, personName) {
     [personaId, personName]
   );
   return rows[0]?.memory_count ?? 1;
-}
-
-/**
- * Rebuild the LLM summary for a named entity.
- * Fetches up to 30 memories tagged with that person and summarises them.
- */
-export async function rebuildEntitySummary(personaId, personName) {
-  const pool = getPool();
-  const { rows } = await pool.query(
-    `SELECT text FROM memories
-     WHERE persona_id = $1
-       AND person_name ILIKE $2
-       AND category = 'memory'
-       AND (expires_at IS NULL OR expires_at > now())
-     ORDER BY confidence DESC, last_accessed_at DESC NULLS LAST
-     LIMIT 30`,
-    [personaId, personName]
-  );
-  if (rows.length === 0) return;
-
-  const factList = rows.map((r) => `- ${r.text}`).join("\n");
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0,
-      max_tokens: 200,
-      messages: [
-        {
-          role: "system",
-          content: `You are summarising what a persona knows about a person in their friend group. Write 2–3 sentences covering who they are, key facts, and their relationship to the group. Be specific and factual — only include what's in the facts provided. Do not invent details.`,
-        },
-        {
-          role: "user",
-          content: `Person: ${personName}\n\nKnown facts:\n${factList}`,
-        },
-      ],
-    });
-    const summary = response.choices[0].message.content.trim();
-    await pool.query(
-      `UPDATE entities
-       SET summary = $1, summary_updated_at = now(), memory_count = $2
-       WHERE persona_id = $3 AND name ILIKE $4`,
-      [summary, rows.length, personaId, personName]
-    );
-    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "entity_summary_rebuilt", personaId, personName, memoryCount: rows.length }));
-  } catch (err) {
-    console.log(JSON.stringify({ ts: new Date().toISOString(), stage: "entity_summary_error", personaId, personName, error: err.message }));
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -254,10 +254,13 @@ async function runChippleMeltdown(channel) {
     ]);
     const [memoryResult, directives] = await Promise.all([
       retrieveMemory(seed, 8),
-      Promise.resolve(getDirectives()),
+      getDirectives(),
     ]);
     const { memories: retrievedMemories, personProfile } = memoryResult;
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, contextWindows, [], retrievedMemories, directives, [], personProfile, null, persona.name);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, {
+      results, contextWindows, retrievedMemories, directives, personProfile,
+      personaName: persona.name,
+    });
 
     // Send three messages with typing breaks for dramatic effect
     await channel.sendTyping();
@@ -303,12 +306,15 @@ async function runInjection() {
 
     const [memoryResult, directives, discordExamples] = await Promise.all([
       retrieveMemory(INJECTION_SEED, 8),
-      Promise.resolve(getDirectives()),
+      getDirectives(),
       retrieveDiscord(INJECTION_SEED, 3),
     ]);
     const { memories: retrievedMemories, personProfile } = memoryResult;
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, contextWindows, [], retrievedMemories, directives, discordExamples, personProfile, null, persona.name);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, {
+      results, contextWindows, retrievedMemories, directives, discordExamples, personProfile,
+      personaName: persona.name,
+    });
     const message = await generate(systemPrompt, [], INJECTION_SEED);
 
     for (const ch of channels) {
@@ -327,6 +333,145 @@ function scheduleInjection() {
     await runInjection();
     scheduleInjection();
   }, delay);
+}
+
+// ---------------------------------------------------------------------------
+// Command handlers — called from the MessageCreate handler
+// ---------------------------------------------------------------------------
+
+async function handleRemember(message, match, senderName, requestId) {
+  const rememberIsEpisodic = /^remember\s+for\s+now:/i.test(match[0]);
+  const isTrusted = isAdmin(message.author.id) || message.author.id === SPAM_USER_ID;
+  const fact = match[1].trim();
+
+  if (!isTrusted && !checkRememberRateLimit(message.author.id)) {
+    const line = REMEMBER_BACKOFF[Math.floor(Math.random() * REMEMBER_BACKOFF.length)];
+    await message.reply(line);
+    return;
+  }
+
+  if (rememberIsEpisodic) {
+    const result = await addMemory(`for now: ${fact}`, senderName);
+    log(requestId, "memory_write", { fact, addedBy: senderName, action: result.action, path: "temporary" });
+    const acks = REMEMBER_NOW_ACKS[result.action] ?? ["ok"];
+    await message.reply(acks[Math.floor(Math.random() * acks.length)]);
+    const reacts = { added: "📅", merged: "✏️", skipped: "👍", split: "✂️" };
+    const emoji = reacts[result.action];
+    if (emoji) await message.react(emoji).catch(() => {});
+  } else {
+    const result = await addMemory(fact, senderName);
+    log(requestId, "memory_write", { fact, addedBy: senderName, action: result.action, path: "permanent", trusted: isTrusted });
+    const acks = REMEMBER_ACKS[result.action] ?? ["ok"];
+    await message.reply(acks[Math.floor(Math.random() * acks.length)]);
+    const reacts = {
+      added:   result.category === "directive" ? "🫡" : "🧠",
+      merged:  "✏️",
+      skipped: "👍",
+      split:   "✂️",
+    };
+    const emoji = reacts[result.action];
+    if (emoji) await message.react(emoji).catch(() => {});
+    if (result.temporal) await message.react("📅").catch(() => {});
+  }
+}
+
+async function handleListMemory(message) {
+  const entries = await getAllMemory();
+  if (entries.length === 0) {
+    await message.reply(`No memories stored yet.`);
+    return;
+  }
+  const sorted = [...entries].sort((a, b) => (b.confidence ?? 1) - (a.confidence ?? 1));
+  const counts = sorted.reduce((acc, e) => { acc[e.category] = (acc[e.category] ?? 0) + 1; return acc; }, {});
+  const categorySummary = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
+  const high = sorted.filter((e) => (e.confidence ?? 1) >= 0.8).length;
+  const medium = sorted.filter((e) => (e.confidence ?? 1) >= 0.5 && (e.confidence ?? 1) < 0.8).length;
+  const low = sorted.filter((e) => (e.confidence ?? 1) < 0.5).length;
+  const confidenceSummary = `${high} high, ${medium} medium, ${low} low`;
+  const buf = Buffer.from(JSON.stringify(sorted, null, 2), "utf8");
+  await message.reply({
+    content: `**${sorted.length} entries** (${categorySummary}) — ${confidenceSummary} confidence`,
+    files: [{ attachment: buf, name: "memory.json" }],
+  });
+}
+
+async function handleForget(message, keyword, requestId) {
+  if (!isAdmin(message.author.id)) {
+    await message.reply(`nah`);
+    return;
+  }
+  const { removed, entries: removedEntries } = await removeMemory(keyword);
+  log(requestId, "lore_removed", { keyword, removed });
+  if (removed === 0) {
+    await message.reply(`I don't have anything about that.`);
+  } else {
+    const list = removedEntries.map((e) => `• [${e.category}] ${e.text}`).join("\n");
+    await message.reply(`Forgotten ${removed} thing${removed === 1 ? "" : "s"}:\n${list}`);
+  }
+}
+
+async function handleRead(message, url, senderName, requestId) {
+  if (!isAdmin(message.author.id)) {
+    await message.reply(`nah`);
+    return;
+  }
+
+  await message.channel.sendTyping();
+  const typingInterval = setInterval(() => message.channel.sendTyping(), 8000);
+  log(requestId, "url_read_start", { url });
+
+  try {
+    const { facts, pageTitle, error } = await readUrl(url);
+    clearInterval(typingInterval);
+
+    if (error) {
+      const errorMessages = {
+        "timeout":      "Couldn't reach that URL — timed out.",
+        "not-html":     "That doesn't look like a web page.",
+        "too-large":    "That page is way too big for me to read.",
+        "no-content":   "Couldn't find anything useful on that page.",
+        "fetch-failed": "Couldn't reach that URL.",
+      };
+      await message.reply(errorMessages[error] ?? "Something went wrong reading that.");
+      log(requestId, "url_read_error", { url, error });
+      return;
+    }
+
+    if (facts.length === 0) {
+      await message.reply(`Read "${pageTitle}" but didn't find anything worth remembering.`);
+      log(requestId, "url_read_empty", { url, pageTitle });
+      return;
+    }
+
+    let added = 0;
+    let skipped = 0;
+    const sampleFacts = [];
+
+    for (const fact of facts) {
+      const result = await addMemory(fact, senderName, { source: "url-import", sourceUrl: url });
+      log(requestId, "url_fact_store", { fact: fact.slice(0, 80), action: result.action });
+      if (result.action === "added" || result.action === "split") {
+        added++;
+        if (sampleFacts.length < 3) sampleFacts.push(fact);
+      } else {
+        skipped++;
+      }
+    }
+
+    const samples = sampleFacts.map((f) => `• ${f}`).join("\n");
+    if (added === 0) {
+      await message.reply(`Read "${pageTitle}" — already knew all of that.`);
+    } else {
+      const skipNote = skipped > 0 ? ` (${skipped} already known)` : "";
+      await message.reply(`Read "${pageTitle}" — learned ${added} thing${added === 1 ? "" : "s"}${skipNote}:\n${samples}${added > 3 ? `\n…and ${added - 3} more` : ""}`);
+    }
+    await message.react("📖").catch(() => {});
+    log(requestId, "url_read_complete", { url, pageTitle, added, skipped, total: facts.length });
+  } catch (err) {
+    clearInterval(typingInterval);
+    log(requestId, "url_read_error", { url, message: err.message });
+    await message.reply(`Something went wrong reading that page.`);
+  }
 }
 
 client.once(Events.ClientReady, async (c) => {
@@ -517,160 +662,17 @@ client.on(Events.MessageCreate, async (message) => {
     preview: userMessage.slice(0, 80),
   });
 
-  // Handle "remember: X" and "remember for now: X" — store a memory entry and acknowledge
+  // Command dispatch
   const rememberMatch = userMessage.match(/^remember(?:\s+for\s+now)?:\s*(.+)/i);
-  const rememberIsEpisodic = /^remember\s+for\s+now:/i.test(userMessage);
-  if (rememberMatch) {
-    const isTrusted = isAdmin(message.author.id) || message.author.id === SPAM_USER_ID;
-    const fact = rememberMatch[1].trim();
+  if (rememberMatch) { await handleRemember(message, rememberMatch, senderName, requestId); return; }
 
-    if (!isTrusted && !checkRememberRateLimit(message.author.id)) {
-      const line = REMEMBER_BACKOFF[Math.floor(Math.random() * REMEMBER_BACKOFF.length)];
-      await message.reply(line);
-      return;
-    }
+  if (/^list memory$/i.test(userMessage)) { await handleListMemory(message); return; }
 
-    if (rememberIsEpisodic) {
-      // "remember for now:" — memory with temporal expiry
-      const result = await addMemory(`for now: ${fact}`, senderName);
-      log(requestId, "memory_write", { fact, addedBy: senderName, action: result.action, path: "temporary" });
-      const pool = REMEMBER_NOW_ACKS[result.action] ?? ["ok"];
-      await message.reply(pool[Math.floor(Math.random() * pool.length)]);
-      const reacts = { added: "📅", merged: "✏️", skipped: "👍", split: "✂️" };
-      const emoji = reacts[result.action];
-      if (emoji) await message.react(emoji).catch(() => {});
-    } else {
-      // "remember:" from any user — permanent memory
-      const result = await addMemory(fact, senderName);
-      log(requestId, "memory_write", { fact, addedBy: senderName, action: result.action, path: "permanent", trusted: isTrusted });
-      const pool = REMEMBER_ACKS[result.action] ?? ["ok"];
-      await message.reply(pool[Math.floor(Math.random() * pool.length)]);
-      const reacts = {
-        added:   result.category === "directive" ? "🫡" : "🧠",
-        merged:  "✏️",
-        skipped: "👍",
-        split:   "✂️",
-      };
-      const emoji = reacts[result.action];
-      if (emoji) await message.react(emoji).catch(() => {});
-      if (result.temporal) await message.react("📅").catch(() => {});
-    }
-    return;
-  }
-
-  // Handle "list memory" — send all memory entries as a JSON file attachment
-  if (/^list memory$/i.test(userMessage)) {
-    const entries = await getAllMemory();
-    if (entries.length === 0) {
-      await message.reply(`No memories stored yet.`);
-      return;
-    }
-    const sorted = [...entries].sort((a, b) => (b.confidence ?? 1) - (a.confidence ?? 1));
-    const counts = sorted.reduce((acc, e) => { acc[e.category] = (acc[e.category] ?? 0) + 1; return acc; }, {});
-    const categorySummary = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
-    const high = sorted.filter((e) => (e.confidence ?? 1) >= 0.8).length;
-    const medium = sorted.filter((e) => (e.confidence ?? 1) >= 0.5 && (e.confidence ?? 1) < 0.8).length;
-    const low = sorted.filter((e) => (e.confidence ?? 1) < 0.5).length;
-    const confidenceSummary = `${high} high, ${medium} medium, ${low} low`;
-    const buf = Buffer.from(JSON.stringify(sorted, null, 2), "utf8");
-    await message.reply({
-      content: `**${sorted.length} entries** (${categorySummary}) — ${confidenceSummary} confidence`,
-      files: [{ attachment: buf, name: "memory.json" }],
-    });
-    return;
-  }
-
-  // Handle "forget: X" — remove memory entries matching a keyword
   const forgetMatch = userMessage.match(/^forget:\s*(.+)/i);
-  if (forgetMatch) {
-    if (!isAdmin(message.author.id)) {
-      await message.reply(`nah`);
-      return;
-    }
-    const keyword = forgetMatch[1].trim();
-    const { removed, entries: removedEntries } = await removeMemory(keyword);
-    log(requestId, "lore_removed", { keyword, removed });
-    if (removed === 0) {
-      await message.reply(`I don't have anything about that.`);
-    } else {
-      const list = removedEntries.map((e) => `• [${e.category}] ${e.text}`).join("\n");
-      await message.reply(`Forgotten ${removed} thing${removed === 1 ? "" : "s"}:\n${list}`);
-    }
-    return;
-  }
+  if (forgetMatch) { await handleForget(message, forgetMatch[1].trim(), requestId); return; }
 
-  // Handle "read: <url>" — fetch a URL and extract facts into memory (admin only)
   const readMatch = userMessage.match(/^read:\s*(https?:\/\/\S+)/i);
-  if (readMatch) {
-    if (!isAdmin(message.author.id)) {
-      await message.reply(`nah`);
-      return;
-    }
-
-    const url = readMatch[1];
-
-    await message.channel.sendTyping();
-    const typingInterval = setInterval(() => message.channel.sendTyping(), 8000);
-    log(requestId, "url_read_start", { url });
-
-    try {
-      const { facts, pageTitle, error } = await readUrl(url);
-
-      clearInterval(typingInterval);
-
-      if (error) {
-        const errorMessages = {
-          "timeout": "Couldn't reach that URL — timed out.",
-          "not-html": "That doesn't look like a web page.",
-          "too-large": "That page is way too big for me to read.",
-          "no-content": "Couldn't find anything useful on that page.",
-          "fetch-failed": "Couldn't reach that URL.",
-        };
-        await message.reply(errorMessages[error] ?? "Something went wrong reading that.");
-        log(requestId, "url_read_error", { url, error });
-        return;
-      }
-
-      if (facts.length === 0) {
-        await message.reply(`Read "${pageTitle}" but didn't find anything worth remembering.`);
-        log(requestId, "url_read_empty", { url, pageTitle });
-        return;
-      }
-
-      // Store each fact as a permanent memory entry
-      let added = 0;
-      let skipped = 0;
-      const sampleFacts = [];
-
-      for (const fact of facts) {
-        const result = await addMemory(fact, senderName, { source: "url-import", sourceUrl: url });
-        log(requestId, "url_fact_store", { fact: fact.slice(0, 80), action: result.action });
-        if (result.action === "added" || result.action === "split") {
-          added++;
-          if (sampleFacts.length < 3) sampleFacts.push(fact);
-        } else {
-          skipped++;
-        }
-      }
-
-      // Build response
-      const samples = sampleFacts.map((f) => `• ${f}`).join("\n");
-      if (added === 0) {
-        await message.reply(`Read "${pageTitle}" — already knew all of that.`);
-      } else {
-        const skipNote = skipped > 0 ? ` (${skipped} already known)` : "";
-        await message.reply(`Read "${pageTitle}" — learned ${added} thing${added === 1 ? "" : "s"}${skipNote}:\n${samples}${added > 3 ? `\n…and ${added - 3} more` : ""}`);
-      }
-      await message.react("📖").catch(() => {});
-      log(requestId, "url_read_complete", { url, pageTitle, added, skipped, total: facts.length });
-
-    } catch (err) {
-      clearInterval(typingInterval);
-      log(requestId, "url_read_error", { url, message: err.message });
-      await message.reply(`Something went wrong reading that page.`);
-    }
-    return;
-  }
+  if (readMatch) { await handleRead(message, readMatch[1], senderName, requestId); return; }
 
   let typingInterval;
   try {
@@ -787,7 +789,7 @@ client.on(Events.MessageCreate, async (message) => {
     // Retrieve relevant memories + directives + discord examples
     const [memoryResult, directives, discordExamples] = await Promise.all([
       retrieveMemory(retrievalQuery, 8),
-      Promise.resolve(getDirectives()),
+      getDirectives(),
       retrieveDiscord(retrievalQuery, 3),
     ]);
     const { memories: retrievedMemories, personProfile } = memoryResult;
@@ -803,7 +805,11 @@ client.on(Events.MessageCreate, async (message) => {
       ? `${senderName} just said something to you directly. This is a back-and-forth — engage with what they actually said. Respond to the specific thing, push back, ask something, keep the thread going. Don't just react to the topic and drop it.`
       : null;
 
-    const systemPrompt = buildSystemPrompt(baseSystemPrompt, results, contextWindows, recentBotReplies, retrievedMemories, directives, discordExamples, personProfile, aggression, persona.name, crossTalkHint, bitContext);
+    const systemPrompt = buildSystemPrompt(baseSystemPrompt, {
+      results, contextWindows, recentBotReplies, retrievedMemories, directives,
+      discordExamples, personProfile, aggression, crossTalkHint, bitContext,
+      personaName: persona.name,
+    });
 
     log(requestId, "generating", { aggressive: !!aggression, bit: !!bitContext });
     const t3 = Date.now();
@@ -850,7 +856,7 @@ client.on(Events.MessageCreate, async (message) => {
       };
       const buf = Buffer.from(JSON.stringify(debugData, null, 2), "utf8");
       await message.channel.send({
-        content: `**[debug]** directives:${directives.length} facts:${retrievedFacts.length} corpus:${contextWindows.length} discord:${discordExamples.length} rag:${results.length}`,
+        content: `**[debug]** directives:${directives.length} memories:${retrievedMemories.length} corpus:${contextWindows.length} discord:${discordExamples.length} rag:${results.length}`,
         files: [{ attachment: buf, name: "debug.json" }],
       });
     }
