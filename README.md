@@ -60,7 +60,7 @@ Generation (gpt-4o) ──> Discord reply
 
 ```
 Implicit memory (async path):
-    Conversation messages
+    Conversation messages (human only — bot messages excluded from extraction)
         |
         v
     extractImplicit() ──> BullMQ queue ──> memory-worker
@@ -199,7 +199,9 @@ Two categories: `memory` and `directive`.
   - Pruning: daily delete of expired + never-accessed stale bot-inferred memories (>30 days)
 - **directive** — behavioral rules set by admins; always injected into every prompt, never pruned
 
-**Entity profiles:** the `entities` table holds one LLM-generated summary per known person. When a query names a known person, their summary is injected as a dedicated block in the system prompt. Summaries rebuild incrementally every 3 new tagged memories.
+**Entity profiles:** the `entities` table holds one LLM-generated summary per known person. When a query names a known person, their summary is injected as a dedicated block in the system prompt. Summaries rebuild incrementally every 3 new tagged memories. Orphaned entity rows (no remaining memories) are cleaned up automatically on memory removal.
+
+**Memory isolation:** each persona only extracts from human messages — other bots' messages are never fed into implicit extraction, preventing cross-persona reinforcement.
 
 ## Privacy
 

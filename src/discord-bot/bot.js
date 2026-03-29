@@ -840,7 +840,7 @@ client.on(Events.MessageCreate, async (message) => {
     const shouldExtract = inHomeChannel || (userMessage.length >= 10 && !isPureQuestion);
     if (shouldExtract) {
       const priorContext = priorMessages.slice(-EXTRACTION_MESSAGES).filter(({ isBot, botDirected }) => !isBot && !botDirected).map(({ name, text }) => `${name}: ${text}`);
-      const triggerLine = (!isPureQuestion && userMessage.length >= 10) ? [`${senderName}: ${userMessage}`] : [];
+      const triggerLine = (!message.author.bot && !isPureQuestion && userMessage.length >= 10) ? [`${senderName}: ${userMessage}`] : [];
       const extractionContext = [...priorContext, ...triggerLine].join("\n");
       if (extractionContext.trim()) runImplicitExtraction(extractionContext, requestId, message, inHomeChannel).catch(() => {});
     }
