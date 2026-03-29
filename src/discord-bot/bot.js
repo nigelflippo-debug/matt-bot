@@ -104,6 +104,18 @@ const mp = persona.memoryPhrases;
 const REMEMBER_ACKS = mp?.acks ?? DEFAULT_REMEMBER_ACKS;
 const REMEMBER_NOW_ACKS = mp?.nowAcks ?? DEFAULT_REMEMBER_NOW_ACKS;
 const REMEMBER_BACKOFF = mp?.backoff ?? DEFAULT_REMEMBER_BACKOFF;
+const REMEMBER_DENIED = mp?.denied ?? [
+  "yeah that's not how this works",
+  "I don't take requests",
+  "you don't get to decide what I remember",
+  "my brain, my rules",
+  "lol no",
+  "who gave you that kind of power",
+  "I'll remember what I want, thanks",
+  "not your call",
+  "bold of you to think that would work",
+  "that's cute",
+];
 
 // Home channel response rate — don't respond to every unprompted message
 const HOME_CHANNEL_RESPONSE_CHANCE = 0.8;
@@ -340,15 +352,14 @@ function scheduleInjection() {
 // ---------------------------------------------------------------------------
 
 async function handleRemember(message, match, senderName, requestId) {
-  const rememberIsEpisodic = /^remember\s+for\s+now:/i.test(match[0]);
-  const isTrusted = isAdmin(message.author.id) || message.author.id === SPAM_USER_ID;
-  const fact = match[1].trim();
-
-  if (!isTrusted && !checkRememberRateLimit(message.author.id)) {
-    const line = REMEMBER_BACKOFF[Math.floor(Math.random() * REMEMBER_BACKOFF.length)];
+  if (!isAdmin(message.author.id)) {
+    const line = REMEMBER_DENIED[Math.floor(Math.random() * REMEMBER_DENIED.length)];
     await message.reply(line);
     return;
   }
+
+  const rememberIsEpisodic = /^remember\s+for\s+now:/i.test(match[0]);
+  const fact = match[1].trim();
 
   if (rememberIsEpisodic) {
     const result = await addMemory(`for now: ${fact}`, senderName);
@@ -360,7 +371,7 @@ async function handleRemember(message, match, senderName, requestId) {
     if (emoji) await message.react(emoji).catch(() => {});
   } else {
     const result = await addMemory(fact, senderName);
-    log(requestId, "memory_write", { fact, addedBy: senderName, action: result.action, path: "permanent", trusted: isTrusted });
+    log(requestId, "memory_write", { fact, addedBy: senderName, action: result.action, path: "permanent" });
     const acks = REMEMBER_ACKS[result.action] ?? ["ok"];
     await message.reply(acks[Math.floor(Math.random() * acks.length)]);
     const reacts = {

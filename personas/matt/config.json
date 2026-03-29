@@ -25,6 +25,16 @@
       "ok enough, I need a minute",
       "relax, I'll remember stuff"
     ],
+    "denied": [
+      "yeah that's not how this works",
+      "I don't take requests",
+      "you don't get to decide what I remember",
+      "my brain, my rules",
+      "lol no",
+      "who gave you that kind of power",
+      "bold of you to think that would work",
+      "not your call bud"
+    ],
     "notedTemplates": [
       "oh wait — {fact}",
       "noted btw — {fact}",

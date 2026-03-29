@@ -23,6 +23,15 @@
       "relax",
       "one thing at a time",
       "I got it"
+    ],
+    "denied": [
+      "haha no",
+      "not really how it works",
+      "my memory, my call",
+      "yeah I'm going to pass on that",
+      "that's not up to you",
+      "nice try though",
+      "I'll decide what I remember thanks"
     ]
   },
   "specialBehaviors": {}
