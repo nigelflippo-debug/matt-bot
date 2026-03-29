@@ -848,7 +848,7 @@ client.on(Events.MessageCreate, async (message) => {
     // Implicit extraction — in home channel the bot responds to everything so always extract from context.
     // Outside home channel, skip short pure questions since they contain no facts.
     const isPureQuestion = userMessage.endsWith("?") && userMessage.length < 60;
-    const shouldExtract = inHomeChannel || (userMessage.length >= 10 && !isPureQuestion);
+    const shouldExtract = !message.author.bot && (inHomeChannel || (userMessage.length >= 10 && !isPureQuestion));
     if (shouldExtract) {
       const priorContext = priorMessages.slice(-EXTRACTION_MESSAGES).filter(({ isBot, botDirected }) => !isBot && !botDirected).map(({ name, text }) => `${name}: ${text}`);
       const triggerLine = (!message.author.bot && !isPureQuestion && userMessage.length >= 10) ? [`${senderName}: ${userMessage}`] : [];
