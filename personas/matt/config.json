@@ -67,12 +67,6 @@
       ],
       "openers": ["wait", "hold on", "oh no", "...", "stop", "don't"],
       "closers": ["...anyway", "forget I said that", "I'm fine", "whatever", "...yeah", "don't worry about it"]
-    },
-    "injection": {
-      "enabled": true,
-      "seed": "Matt aggressively asks who wants to game",
-      "minMs": 14400000,
-      "maxMs": 28800000
     }
   }
 }
